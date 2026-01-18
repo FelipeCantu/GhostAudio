@@ -12,7 +12,7 @@ export default function CDImporter() {
         setStatus("scanning");
         setMessage("Scanning for optical drives...");
         try {
-            const res = await fetch("http://localhost:8000/api/drives/");
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/drives/`);
             if (!res.ok) throw new Error("Failed to connect to backend");
             const data = await res.json();
             setDrives(data.drives || []);
@@ -35,7 +35,7 @@ export default function CDImporter() {
         setStatus("ripping");
         setMessage("Starting import process...");
         try {
-            const res = await fetch("http://localhost:8000/api/rip/", {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/rip/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ drive_path: selectedDrive }),
@@ -114,8 +114,8 @@ export default function CDImporter() {
                 {/* Status / Message Display */}
                 {message && (
                     <div className={`p-4 rounded-xl text-sm ${status === 'error' ? 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400' :
-                            status === 'completed' ? 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400' :
-                                'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                        status === 'completed' ? 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400' :
+                            'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
                         }`}>
                         <div className="flex items-center gap-2">
                             {status === 'ripping' && (

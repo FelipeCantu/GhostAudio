@@ -3,3 +3,7 @@ pymongo
 django
 django-cors-headers
 requests
+gunicorn
+psycopg2-binary
+dj-database-url
+whitenoise
