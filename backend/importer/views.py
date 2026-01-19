@@ -13,6 +13,12 @@ def rip_cd(request):
     if request.method == 'POST':
         data = json.loads(request.body)
         drive = data.get('drive_path')
-        # Trigger rip (async usually)
-        return JsonResponse({'status': 'started', 'drive': drive})
+        
+        ripper = CDRipper('music_library')
+        try:
+            # Note: In a real app this should be a Celery task or async
+            tracks = ripper.rip_cd(drive)
+            return JsonResponse({'status': 'started', 'drive': drive, 'tracks': tracks})
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
     return JsonResponse({'error': 'Invalid method'}, status=405)

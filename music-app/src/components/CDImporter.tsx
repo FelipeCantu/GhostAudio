@@ -12,7 +12,9 @@ export default function CDImporter() {
         setStatus("scanning");
         setMessage("Scanning for optical drives...");
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/drives/`);
+            // Try connecting to localhost:8000 (Backend default)
+            // Note: In production this would point to localhost if using the bridge
+            const res = await fetch('http://localhost:8000/api/drives/');
             if (!res.ok) throw new Error("Failed to connect to backend");
             const data = await res.json();
             setDrives(data.drives || []);
@@ -26,7 +28,7 @@ export default function CDImporter() {
         } catch (err: any) {
             console.error(err);
             setStatus("error");
-            setMessage("Error connecting to importer service. Is the backend running?");
+            setMessage("Local backend unavailable. Please run the GhostAudio backend.");
         }
     };
 
@@ -35,7 +37,7 @@ export default function CDImporter() {
         setStatus("ripping");
         setMessage("Starting import process...");
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/rip/`, {
+            const res = await fetch('http://localhost:8000/api/rip/', {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ drive_path: selectedDrive }),

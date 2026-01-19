@@ -1,6 +1,4 @@
-djongo
-pymongo
-django
+django>=5.0
 django-cors-headers
 requests
 gunicorn
