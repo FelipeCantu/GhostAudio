@@ -37,36 +37,54 @@ function createWindow() {
 }
 
 function startPythonBackend() {
+  const backendPath = isDev
+    ? path.join(__dirname, '../../backend')
+    : path.join(process.resourcesPath);
+
+  let pythonCmd, args;
+
   if (isDev) {
-    const backendPath = path.join(__dirname, '../../backend');
-    const pythonCmd = path.join(backendPath, 'venv/Scripts/python.exe');
+    pythonCmd = path.join(backendPath, 'venv/Scripts/python.exe');
     const managePy = path.join(backendPath, 'manage.py');
-
-    pythonProcess = spawn(pythonCmd, [managePy, 'runserver', '8000'], {
-      cwd: backendPath,
-    });
+    args = [managePy, 'runserver', '8000'];
   } else {
-    // In production, the backend executable is likely placed in extraResources
-    const backendExe = path.join(process.resourcesPath, 'backend.exe');
-    console.log('Starting packaged backend from:', backendExe);
-
-    // Run the packaged backend
-    pythonProcess = spawn(backendExe, ['runserver', '8000', '--noreload']);
+    pythonCmd = path.join(backendPath, 'backend.exe');
+    args = ['runserver', '8000', '--noreload'];
   }
 
-  if (pythonProcess) {
-    pythonProcess.stdout.on('data', (data) => {
-      console.log(`Backend stdout: ${data}`);
-    });
+  console.log(`[Electron] Starting backend with: ${pythonCmd} ${args.join(' ')}`);
 
-    pythonProcess.stderr.on('data', (data) => {
-      console.error(`Backend stderr: ${data}`);
-    });
-
-    pythonProcess.on('close', (code) => {
-      console.log(`Backend process exited with code ${code}`);
-    });
+  // Check if executable exists
+  const fs = require('fs');
+  if (!fs.existsSync(pythonCmd)) {
+    console.error(`[Electron] Backend executable not found at: ${pythonCmd}`);
+    return;
   }
+
+  pythonProcess = spawn(pythonCmd, args, {
+    cwd: isDev ? backendPath : undefined,
+    stdio: 'pipe', // Explicitly pipe stdio
+    detached: false,
+    shell: false
+  });
+
+  pythonProcess.stdout.on('data', (data) => {
+    console.log(`[Backend] ${data.toString().trim()}`);
+  });
+
+  pythonProcess.stderr.on('data', (data) => {
+    // Django sometimes logs info to stderr
+    console.log(`[Backend LOG] ${data.toString().trim()}`);
+  });
+
+  pythonProcess.on('error', (err) => {
+    console.error('[Electron] Failed to start backend process:', err);
+  });
+
+  pythonProcess.on('close', (code) => {
+    console.log(`[Electron] Backend process exited with code ${code}`);
+    pythonProcess = null;
+  });
 }
 
 app.on('ready', () => {
