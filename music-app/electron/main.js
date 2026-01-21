@@ -52,12 +52,20 @@ function startPythonBackend() {
     args = ['runserver', '8000', '--noreload'];
   }
 
-  console.log(`[Electron] Starting backend with: ${pythonCmd} ${args.join(' ')}`);
-
   // Check if executable exists
   const fs = require('fs');
+  const logFile = path.join(app.getPath('userData'), 'backend-debug.log');
+
+  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+  const log = (msg) => {
+    console.log(msg);
+    logStream.write(`${new Date().toISOString()} ${msg}\n`);
+  };
+
+  log(`[Electron] Starting backend with: ${pythonCmd} ${args.join(' ')}`);
+
   if (!fs.existsSync(pythonCmd)) {
-    console.error(`[Electron] Backend executable not found at: ${pythonCmd}`);
+    log(`[Electron] Backend executable not found at: ${pythonCmd}`);
     return;
   }
 
@@ -69,20 +77,20 @@ function startPythonBackend() {
   });
 
   pythonProcess.stdout.on('data', (data) => {
-    console.log(`[Backend] ${data.toString().trim()}`);
+    log(`[Backend] ${data.toString().trim()}`);
   });
 
   pythonProcess.stderr.on('data', (data) => {
     // Django sometimes logs info to stderr
-    console.log(`[Backend LOG] ${data.toString().trim()}`);
+    log(`[Backend LOG] ${data.toString().trim()}`);
   });
 
   pythonProcess.on('error', (err) => {
-    console.error('[Electron] Failed to start backend process:', err);
+    log(`[Electron] Failed to start backend process: ${err.message}`);
   });
 
   pythonProcess.on('close', (code) => {
-    console.log(`[Electron] Backend process exited with code ${code}`);
+    log(`[Electron] Backend process exited with code ${code}`);
     pythonProcess = null;
   });
 }

@@ -3,16 +3,15 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
-hiddenimports = ['config', 'config.settings', 'corsheaders', 'corsheaders.middleware']
+hiddenimports = [
+    'config', 'config.settings', 
+    'corsheaders', 'corsheaders.middleware',
+    'importer', 'importer.apps', 'importer.urls', 'importer.views', 'importer.services'
+]
 tmp_ret = collect_all('django')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('corsheaders')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-try:
-    tmp_ret = collect_all('importer')
-    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-except:
-    pass
 
 
 a = Analysis(
