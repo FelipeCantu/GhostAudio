@@ -1,6 +1,6 @@
-"use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -36,6 +36,11 @@ export default function CDImporter() {
             setMessage("Local backend unavailable. Please ensure backend is running.");
         }
     };
+
+    useEffect(() => {
+        scanDrives();
+    }, []);
+
 
     const startRip = async () => {
         if (!selectedDrive) return;
