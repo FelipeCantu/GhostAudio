@@ -115,7 +115,7 @@ export default function CDImporter() {
                             <div className="flex justify-between items-center px-1">
                                 <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Target Source</label>
                                 <button
-                                    onClick={scanDrives}
+                                    onClick={() => scanDrives()}
                                     disabled={status === "scanning" || status === "ripping"}
                                     className="text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                                 >
@@ -130,7 +130,7 @@ export default function CDImporter() {
                                 <motion.div
                                     whileHover={{ scale: 1.02 }}
                                     whileTap={{ scale: 0.98 }}
-                                    onClick={scanDrives}
+                                    onClick={() => scanDrives()}
                                     className="cursor-pointer group relative overflow-hidden rounded-2xl border border-dashed border-zinc-700 hover:border-blue-500/50 hover:bg-white/5 transition-all p-8 text-center"
                                 >
                                     <p className="text-zinc-400 mb-3 text-sm">No optical drives detected</p>
