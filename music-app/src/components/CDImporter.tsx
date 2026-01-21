@@ -15,14 +15,19 @@ export default function CDImporter() {
     const [status, setStatus] = useState<"idle" | "scanning" | "ripping" | "completed" | "error">("idle");
     const [message, setMessage] = useState("");
 
-    const scanDrives = async () => {
-        setStatus("scanning");
-        setMessage("Scanning for optical drives...");
+    const scanDrives = async (retryCount = 0) => {
+        if (retryCount === 0) {
+            setStatus("scanning");
+            setMessage("Connecting to backend...");
+        }
+
         try {
             const res = await fetch('http://localhost:8000/api/drives/');
             if (!res.ok) throw new Error("Failed to connect to backend");
+
             const data = await res.json();
             setDrives(data.drives || []);
+
             if (data.drives && data.drives.length > 0) {
                 setSelectedDrive(data.drives[0]);
                 setMessage(`Found ${data.drives.length} drive(s).`);
@@ -32,8 +37,13 @@ export default function CDImporter() {
             setStatus("idle");
         } catch (err: any) {
             console.error(err);
-            setStatus("error");
-            setMessage("Local backend unavailable. Please ensure backend is running.");
+            if (retryCount < 5) {
+                setMessage(`Starting backend service... (${retryCount + 1}/5)`);
+                setTimeout(() => scanDrives(retryCount + 1), 2000);
+            } else {
+                setStatus("error");
+                setMessage("Local backend unavailable. Please manually start the backend or restart the app.");
+            }
         }
     };
 
