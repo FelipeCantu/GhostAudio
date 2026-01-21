@@ -15,14 +15,19 @@ export default function CDImporter() {
     const [status, setStatus] = useState<"idle" | "scanning" | "ripping" | "completed" | "error">("idle");
     const [message, setMessage] = useState("");
 
-    const scanDrives = async () => {
-        setStatus("scanning");
-        setMessage("Scanning for optical drives...");
+    const scanDrives = async (retryCount = 0) => {
+        if (retryCount === 0) {
+            setStatus("scanning");
+            setMessage("Connecting to backend...");
+        }
+
         try {
             const res = await fetch('http://localhost:8000/api/drives/');
             if (!res.ok) throw new Error("Failed to connect to backend");
+
             const data = await res.json();
             setDrives(data.drives || []);
+
             if (data.drives && data.drives.length > 0) {
                 setSelectedDrive(data.drives[0]);
                 setMessage(`Found ${data.drives.length} drive(s).`);
@@ -32,8 +37,13 @@ export default function CDImporter() {
             setStatus("idle");
         } catch (err: any) {
             console.error(err);
-            setStatus("error");
-            setMessage("Local backend unavailable. Please ensure backend is running.");
+            if (retryCount < 5) {
+                setMessage(`Starting backend service... (${retryCount + 1}/5)`);
+                setTimeout(() => scanDrives(retryCount + 1), 2000);
+            } else {
+                setStatus("error");
+                setMessage("Local backend unavailable. Please manually start the backend or restart the app.");
+            }
         }
     };
 
@@ -105,7 +115,7 @@ export default function CDImporter() {
                             <div className="flex justify-between items-center px-1">
                                 <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Target Source</label>
                                 <button
-                                    onClick={scanDrives}
+                                    onClick={() => scanDrives()}
                                     disabled={status === "scanning" || status === "ripping"}
                                     className="text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                                 >
@@ -120,7 +130,7 @@ export default function CDImporter() {
                                 <motion.div
                                     whileHover={{ scale: 1.02 }}
                                     whileTap={{ scale: 0.98 }}
-                                    onClick={scanDrives}
+                                    onClick={() => scanDrives()}
                                     className="cursor-pointer group relative overflow-hidden rounded-2xl border border-dashed border-zinc-700 hover:border-blue-500/50 hover:bg-white/5 transition-all p-8 text-center"
                                 >
                                     <p className="text-zinc-400 mb-3 text-sm">No optical drives detected</p>
