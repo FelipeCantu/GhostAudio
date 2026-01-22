@@ -1,10 +1,9 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
 const serve = require('electron-serve');
+const services = require('./services');
 
 let mainWindow;
-let pythonProcess;
 
 const isDev = !app.isPackaged;
 const appServe = isDev ? null : serve({ directory: path.join(__dirname, '../out') });
@@ -27,7 +26,7 @@ function createWindow() {
     appServe(mainWindow).then(() => {
       mainWindow.loadURL('app://-');
       // DEBUGGING: Open DevTools to see why it's white
-      mainWindow.webContents.openDevTools();
+      // mainWindow.webContents.openDevTools();
     });
   }
 
@@ -36,69 +35,62 @@ function createWindow() {
   });
 }
 
-function startPythonBackend() {
-  const backendPath = isDev
-    ? path.join(__dirname, '../../backend')
-    : path.join(process.resourcesPath);
+// IPC Handlers
+ipcMain.handle('get-drives', async () => {
+  return { drives: await services.getDrives() };
+});
 
-  let pythonCmd, args;
+ipcMain.handle('rip-cd', async (event, args) => {
+  try {
+    const drive = args.drive_path;
+    if (!drive) throw new Error('No drive path provided');
 
-  if (isDev) {
-    pythonCmd = path.join(backendPath, 'venv/Scripts/python.exe');
-    const managePy = path.join(backendPath, 'manage.py');
-    args = [managePy, 'runserver', '8000'];
-  } else {
-    pythonCmd = path.join(backendPath, 'backend.exe');
-    args = ['runserver', '8000', '--noreload'];
+    // We can send progress updates back to the renderer if we want
+    const tracks = await services.ripCD(drive, event.sender);
+    return { status: 'started', drive: drive, tracks: tracks };
+    // Note: The original returned "started" immediately and simulated async.
+    // JS is async by default, but IPC handlers await the result.
+    // For long operations, better to just return "started" and send events,
+    // OR await it all if it's fast enough. 
+    // Given the UI waits for "completed", we can just await it here but maybe the UI expects immediate return?
+    // The original UI polling logic was: status=started, then wait 5s.
+    // Let's stick to the await behavior but return compatible object.
+    // ACTUALLY: The UI code does `const data = await res.json(); if (data.status === "started")`.
+    // If we await the whole rip here, the UI will hang for the duration of the rip.
+    // For a better UX, we should probably run the rip in background.
+
+    // HOWEVER, to keep it simple and robust for this "Removing Backend" task:
+    // We can return "started" immediately, and then do the work?
+    // But main process shouldn't block.
+    // Let's do the work asynchronously and send a "rip-complete" event, 
+    // OR just return the result if it's fast (simulation).
+    // Since we are simulating mostly or doing real ffmpeg which takes time,
+    // let's return { status: 'started' } and let the UI's existing 5s timeout handle the "fake complete"
+    // for now, adjusting the UI to listen for real completion would be better but larger scope.
+    // Wait... the UI says "Importing tracks..." then `setTimeout` 5s.
+    // So the UI assumes it's async and fire-and-forget from the API perspective.
+
+    // Let's match that: Start the process, return valid response.
+    ripInBackground(drive, event.sender);
+    return { status: 'started' };
+  } catch (err) {
+    console.error("IPC Error:", err);
+    return { status: 'error', message: err.message };
   }
+});
 
-  // Check if executable exists
-  const fs = require('fs');
-  const logFile = path.join(app.getPath('userData'), 'backend-debug.log');
-
-  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
-  const log = (msg) => {
-    console.log(msg);
-    logStream.write(`${new Date().toISOString()} ${msg}\n`);
-  };
-
-  log(`[Electron] Starting backend with: ${pythonCmd} ${args.join(' ')}`);
-
-  if (!fs.existsSync(pythonCmd)) {
-    log(`[Electron] Backend executable not found at: ${pythonCmd}`);
-    return;
+async function ripInBackground(drive, sender) {
+  try {
+    await services.ripCD(drive, sender);
+    // Could send an event here if we updated UI to listen
+    // sender.send('rip-complete'); 
+  } catch (e) {
+    console.error("Background rip failed", e);
   }
-
-  pythonProcess = spawn(pythonCmd, args, {
-    cwd: isDev ? backendPath : undefined,
-    stdio: 'pipe', // Explicitly pipe stdio
-    detached: false,
-    shell: false
-  });
-
-  pythonProcess.stdout.on('data', (data) => {
-    log(`[Backend] ${data.toString().trim()}`);
-  });
-
-  pythonProcess.stderr.on('data', (data) => {
-    // Django sometimes logs info to stderr
-    log(`[Backend LOG] ${data.toString().trim()}`);
-  });
-
-  pythonProcess.on('error', (err) => {
-    log(`[Electron] Failed to start backend process: ${err.message}`);
-  });
-
-  pythonProcess.on('close', (code) => {
-    log(`[Electron] Backend process exited with code ${code}`);
-    pythonProcess = null;
-  });
 }
 
 app.on('ready', () => {
-  startPythonBackend();
-  // Wait a bit for the backend to spin up
-  setTimeout(createWindow, isDev ? 3000 : 1000);
+  createWindow();
 });
 
 app.on('window-all-closed', function () {
@@ -110,11 +102,5 @@ app.on('window-all-closed', function () {
 app.on('activate', function () {
   if (mainWindow === null) {
     createWindow();
-  }
-});
-
-app.on('will-quit', () => {
-  if (pythonProcess) {
-    pythonProcess.kill();
   }
 });
