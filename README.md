@@ -4,18 +4,18 @@
 
 ## 🏗 Architecture
 
-This project uses a hybrid architecture:
+This project uses a unified Electron architecture:
 
 - **Frontend**: Next.js (React) app providing the UI.
-- **Desktop Shell**: Electron, which wraps the Next.js app and manages the backend process.
-- **Backend**: Python Django, running as a local server to handle hardware interactions (CD drives) and file management.
+- **Desktop Shell**: Electron, which handles native hardware interactions (CD ripping, filesystem) directly.
+- **No External Backend**: The previous Python dependency has been fully integrated into the main application.
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
 - **Node.js** (v18+)
-- **Python** (v3.10+)
+- **FFmpeg** (Recommended for CD ripping)
 
 ### Installation
 
@@ -25,25 +25,15 @@ This project uses a hybrid architecture:
     cd GhostAudio
     ```
 
-2.  **Setup Backend**:
+2.  **Setup App**:
     ```bash
-    cd backend
-    python -m venv venv
-    # Windows
-    .\venv\Scripts\activate
-    # Install dependencies
-    pip install -r requirements.txt
-    ```
-
-3.  **Setup Frontend**:
-    ```bash
-    cd ../music-app
+    cd music-app
     npm install
     ```
 
 ## 🖥 Running the App
 
-To run the application in development mode (which starts Frontend, Electron, and Backend simultaneously):
+To run the application in development mode:
 
 ```bash
 cd music-app
@@ -53,17 +43,16 @@ npm run electron-dev
 This command will:
 1.  Start the Next.js dev server on port 3000.
 2.  Launch Electron.
-3.  Automatically spin up the Django backend (managed by Electron).
 
 ## ✨ Features
 
 - **CD Drive Scanning**: Automatically detect available optical drives.
-- **Importer**: Interface to rip music from CDs (Simulation mode active).
+- **Native Importer**: Rip music from CDs using bundled or system FFmpeg.
 - **Dark Mode**: Fully supported premium dark interface.
 
 ## 🛠 Project Structure
 
-- `/backend` - Django project for system-level operations.
 - `/music-app` - Next.js + Electron application.
     - `/src` - React source code.
-    - `/electron` - Electron main process scripts.
+    - `/electron` - Electron main process and native services.
+    - `/resources` - Bundled binaries (e.g., ffmpeg.exe).

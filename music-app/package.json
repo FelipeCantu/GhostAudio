@@ -1,7 +1,7 @@
 {
   "name": "music-app",
   "version": "0.1.0",
-  "description": "Ghost Music App Desktop",
+  "description": "A standalone high-fidelity music experience. Rip CDs directly, manage your library offline, and enjoy pure audio without external servers.",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
