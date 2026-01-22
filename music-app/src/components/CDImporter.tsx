@@ -15,17 +15,16 @@ export default function CDImporter() {
     const [status, setStatus] = useState<"idle" | "scanning" | "ripping" | "completed" | "error">("idle");
     const [message, setMessage] = useState("");
 
-    const scanDrives = async (retryCount = 0) => {
-        if (retryCount === 0) {
-            setStatus("scanning");
-            setMessage("Connecting to backend...");
-        }
+    const scanDrives = async () => {
+        setStatus("scanning");
+        setMessage("Scanning for devices...");
 
         try {
-            const res = await fetch('http://localhost:8000/api/drives/');
-            if (!res.ok) throw new Error("Failed to connect to backend");
+            // Use Electron IPC
+            // @ts-ignore
+            const { ipcRenderer } = window.require('electron');
+            const data = await ipcRenderer.invoke('get-drives');
 
-            const data = await res.json();
             setDrives(data.drives || []);
 
             if (data.drives && data.drives.length > 0) {
@@ -37,13 +36,8 @@ export default function CDImporter() {
             setStatus("idle");
         } catch (err: any) {
             console.error(err);
-            if (retryCount < 5) {
-                setMessage(`Starting backend service... (${retryCount + 1}/5)`);
-                setTimeout(() => scanDrives(retryCount + 1), 2000);
-            } else {
-                setStatus("error");
-                setMessage("Local backend unavailable. Please manually start the backend or restart the app.");
-            }
+            setStatus("error");
+            setMessage("Failed to access hardware services.");
         }
     };
 
@@ -57,15 +51,13 @@ export default function CDImporter() {
         setStatus("ripping");
         setMessage("Starting import process...");
         try {
-            const res = await fetch('http://localhost:8000/api/rip/', {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ drive_path: selectedDrive }),
-            });
-            const data = await res.json();
+            // @ts-ignore
+            const { ipcRenderer } = window.require('electron');
+            const data = await ipcRenderer.invoke('rip-cd', { drive_path: selectedDrive });
+
             if (data.status === "started") {
                 setMessage("Importing tracks...");
-                // In a real app, implementing a polling mechanism or websocket here would be ideal
+                // Keep the fake polling for now as the backend is conceptually async
                 setTimeout(() => {
                     setStatus("completed");
                     setMessage("Import completed successfully.");
@@ -76,7 +68,7 @@ export default function CDImporter() {
             }
         } catch (err) {
             setStatus("error");
-            setMessage("Network error starting import.");
+            setMessage("Error starting import.");
         }
     };
 
