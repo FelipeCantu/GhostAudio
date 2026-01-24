@@ -3,6 +3,8 @@
 import CDImporter from "@/components/CDImporter";
 import { motion } from "framer-motion";
 
+import Image from "next/image";
+
 export default function Home() {
   return (
     <div className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-background text-foreground selection:bg-primary/20">
@@ -18,11 +20,18 @@ export default function Home() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: "easeOut" }}
-          className="text-center space-y-4"
+          className="text-center space-y-4 flex flex-col items-center"
         >
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
-            Ghost<span className="text-blue-500">Audio</span>
-          </h1>
+          <div className="relative w-full max-w-[500px]">
+            <Image
+              src="/logo.png"
+              alt="DiZC Logo"
+              width={600}
+              height={200}
+              priority
+              className="w-full h-auto drop-shadow-2xl"
+            />
+          </div>
           <p className="text-lg md:text-xl text-muted-foreground max-w-lg mx-auto leading-relaxed">
             Your personal high-fidelity music manager.
             <br />
