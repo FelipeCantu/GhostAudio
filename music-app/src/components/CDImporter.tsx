@@ -12,7 +12,7 @@ function cn(...inputs: (string | undefined | null | false)[]) {
 import { useAuth } from "@/context/AuthContext";
 
 export default function CDImporter() {
-    const { token, isAuthenticated } = useAuth();
+    const { user, token, isAuthenticated } = useAuth();
     const [drives, setDrives] = useState<string[]>([]);
     const [selectedDrive, setSelectedDrive] = useState<string | null>(null);
     const [status, setStatus] = useState<"idle" | "scanning" | "ripping" | "completed" | "error">("idle");
@@ -37,17 +37,8 @@ export default function CDImporter() {
                     setMessage("No optical drives found.");
                 }
             } else {
-                // Web Mode (Local Bridge)
-                const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/importer";
-                const res = await fetch(`${API_URL}/drives/`);
-                const data = await res.json();
-                setDrives(data.drives || []);
-                if (data.drives && data.drives.length > 0) {
-                    setSelectedDrive(data.drives[0]);
-                    setMessage(`Found ${data.drives.length} drive(s).`);
-                } else {
-                    setMessage("No optical drives found.");
-                }
+                setMessage("CD Import is only available in the Desktop App.");
+                setStatus("error");
             }
             setStatus("idle");
         } catch (err: any) {
@@ -73,10 +64,18 @@ export default function CDImporter() {
                 // Electron Mode
                 // @ts-ignore
                 const { ipcRenderer } = window.require('electron');
-                // Note: IPC implementation needs proper token handling too, but skipping for now or assumed handled in main
-                const data = await ipcRenderer.invoke('rip-cd', { drive_path: selectedDrive, token });
-                if (data.status === "started") {
+                // Pass mongo_user_id (user.id) to the backend via Electron
+                const data = await ipcRenderer.invoke('rip-cd', {
+                    drive_path: selectedDrive,
+                    token,
+                    mongo_user_id: user?.id
+                });
+
+                if (data.status === "started" || data.status === "completed") {
                     setMessage("Importing tracks...");
+                    // If it returns completed immediately (simulated), we still show success
+                    // If it returns started, we wait (or the service handles it)
+                    // For now, let's keep the timeout as a UI feedback loop if the backend is async
                     setTimeout(() => {
                         setStatus("completed");
                         setMessage("Import completed successfully.");
@@ -85,35 +84,8 @@ export default function CDImporter() {
                     throw new Error("Import failed");
                 }
             } else {
-                // Web Mode
-                if (!isAuthenticated || !token) {
-                    setMessage("Please login to import music.");
-                    setStatus("error");
-                    return;
-                }
-
-                const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/importer";
-                const res = await fetch(`${API_URL}/rip/`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({
-                        drive_path: selectedDrive,
-                        metadata: {} // Fetch metadata if possible or let backend do it
-                    })
-                });
-
-                const data = await res.json();
-                if (res.ok) {
-                    setMessage("Importing tracks...");
-                    setStatus("completed"); // Simplified for now
-                    setMessage("Import completed successfully. Added to your Library.");
-                } else {
-                    setMessage(data.detail || "Import failed.");
-                    setStatus("error");
-                }
+                setMessage("CD Import is only available in the Desktop App.");
+                return;
             }
         } catch (err) {
             setStatus("error");
@@ -163,7 +135,7 @@ export default function CDImporter() {
                                     {status === "scanning" && (
                                         <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                     )}
-                                    {status === "scanning" ? "Scanning..." : "Refesh Devices"}
+                                    {status === "scanning" ? "Scanning..." : "Refresh Devices"}
                                 </button>
                             </div>
 

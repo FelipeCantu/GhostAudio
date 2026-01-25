@@ -95,73 +95,41 @@ const Services = {
         return drives || [];
     },
 
-    // Rip CD
-    ripCD: async (drivePath, eventSender) => {
-        const musicDir = path.join(app.getPath('music'), 'GhostAudio Rips');
-        if (!fs.existsSync(musicDir)) {
-            fs.mkdirSync(musicDir, { recursive: true });
-        }
+    // Rip CD - Proxies to Django Backend
+    ripCD: async (args, eventSender) => {
+        // args contains { drive_path, mongo_user_id, token }
+        const drivePath = args.drive_path || args; // Handle both object and string for backward compat
+        const mongoUserId = args.mongo_user_id;
 
-        const results = [];
+        console.log(`[Electron] Requesting Rip for drive: ${drivePath}, User: ${mongoUserId}`);
 
-        // Resolve ffmpeg path
-        let ffmpegPath = 'ffmpeg'; // Default to system PATH
+        try {
+            // Call Django API
+            const response = await fetch('http://127.0.0.1:8000/api/rip/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    drive_path: drivePath,
+                    mongo_user_id: mongoUserId,
+                    // metadata: {} // Let backend fetch metadata
+                })
+            });
 
-        // Check bundled resources (Production)
-        const bundledPath = path.join(process.resourcesPath, 'ffmpeg.exe');
-        // Check dev resources (Development)
-        const devPath = path.join(__dirname, '../resources/ffmpeg.exe');
+            const data = await response.json();
 
-        if (fs.existsSync(bundledPath)) {
-            ffmpegPath = bundledPath;
-            console.log('Using bundled ffmpeg:', ffmpegPath);
-        } else if (fs.existsSync(devPath)) {
-            ffmpegPath = devPath;
-            console.log('Using dev ffmpeg:', ffmpegPath);
-        } else {
-            console.log('Using system ffmpeg (if available)');
-        }
-
-        const trackCount = 3;
-
-        for (let i = 1; i <= trackCount; i++) {
-            const filename = `Track_${String(i).padStart(2, '0')}.wav`;
-            const outputPath = path.join(musicDir, filename);
-
-            if (eventSender) eventSender.send('rip-progress', { status: 'ripping_track', track: i, total: trackCount });
-
-            try {
-                const trackPath = `${drivePath}track${String(i).padStart(2, '0')}.cda`;
-                console.log(`Ripping ${trackPath} -> ${outputPath}`);
-
-                await new Promise((resolve, reject) => {
-                    const ffmpeg = spawn(ffmpegPath, [
-                        '-y',
-                        '-i', trackPath,
-                        outputPath
-                    ]);
-
-                    ffmpeg.on('error', (err) => {
-                        reject(err);
-                    });
-
-                    ffmpeg.on('close', (code) => {
-                        if (code === 0) resolve();
-                        else reject(new Error(`ffmpeg exited with code ${code}`));
-                    });
-                });
-
-                results.push(outputPath);
-
-            } catch (e) {
-                console.error(`Failed to rip track ${i}`, e);
-                // Fallback for demo/missing ffmpeg
-                fs.writeFileSync(outputPath, 'Simulated Audio Content (Node.js Fallback)');
-                results.push(outputPath);
+            if (!response.ok) {
+                throw new Error(data.message || 'Rip failed significantly');
             }
-        }
 
-        return results;
+            return data; // { status: 'completed', album: ... }
+
+        } catch (e) {
+            console.error("[Electron] Rip Proxy Failed:", e);
+            // Fallback? No, we want to rely on the backend.
+            throw e;
+        }
     }
 };
 

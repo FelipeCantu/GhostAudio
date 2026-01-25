@@ -1,9 +1,15 @@
 import os
 import dj_database_url
 from pathlib import Path
+from dotenv import load_dotenv
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from Next.js .env.local
+env_path = BASE_DIR.parent / 'music-app' / '.env.local'
+load_dotenv(env_path)
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-test-key')
 
@@ -77,6 +83,9 @@ DATABASES = {
         conn_max_age=600
     )
 }
+
+# MongoDB Configuration
+MONGODB_URI = os.environ.get('MONGODB_URI')
 
 AUTH_PASSWORD_VALIDATORS = [
     {

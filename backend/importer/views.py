@@ -5,6 +5,11 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 import json
 import logging
+import os
+from datetime import datetime
+from bson.objectid import ObjectId
+from pymongo import MongoClient
+from django.conf import settings
 from .services import CDRipper
 from .models import Album, Track
 from .serializers import AlbumSerializer, UserSerializer
@@ -57,50 +62,101 @@ def get_cd_metadata(request):
     return JsonResponse({'error': 'Invalid method'}, status=405)
 
 @api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
+@permission_classes([permissions.AllowAny]) 
 def rip_cd(request):
     data = request.data
     drive = data.get('drive_path')
     metadata = data.get('metadata')
-    
+    nosave = data.get('nosave', False)
+    mongo_user_id = data.get('mongo_user_id') # New required field for bridge
+
     ripper = CDRipper('music_library')
     try:
         # 1. Perform the rip (Physical/File Operation)
-        # Note: We update service to return track paths
         tracks_paths = ripper.rip_cd(drive, metadata=metadata)
         
-        # 2. Save to Database
-        artist_name = metadata.get('artist', 'Unknown Artist')
-        album_title = metadata.get('album', 'Unknown Album')
-        
-        # Create Album
-        album = Album.objects.create(
-            user=request.user,
-            title=album_title,
-            artist=artist_name,
-            # cover_art could be handled if we saved it to disk
-        )
-        
-        # Create Tracks
-        # Assuming tracks_paths is a list of file paths.
-        # We need to map them back to metadata logic or just use order
-        for idx, path in enumerate(tracks_paths):
-            track_num = idx + 1
-            # Try to get title from metadata if available
-            track_title = f"Track {track_num}"
-            if metadata and 'tracks' in metadata and idx < len(metadata['tracks']):
-                track_title = metadata['tracks'][idx].get('title', track_title)
-            
-            Track.objects.create(
-                album=album,
-                title=track_title,
-                track_number=track_num,
-                audio_file=str(path)
-            )
+        if nosave:
+             return Response({
+                'status': 'completed', 
+                'tracks': tracks_paths,
+                'metadata': metadata
+            })
 
-        # Return the new album data
-        serializer = AlbumSerializer(album)
-        return Response({'status': 'completed', 'album': serializer.data})
+        # 2. Bridge to MongoDB (Primary)
+        if mongo_user_id and settings.MONGODB_URI:
+            try:
+                client = MongoClient(settings.MONGODB_URI)
+                db = client.get_database() # Uses database from URI
+                albums_collection = db['albums']
+                
+                artist_name = metadata.get('artist', 'Unknown Artist')
+                album_title = metadata.get('album', 'Unknown Album')
+                # Assume cover art is handled separately or we add a placeholder path
+                # For now, we focus on the data structure
+
+                # Construct Tracks
+                mongo_tracks = []
+                for idx, path in enumerate(tracks_paths):
+                    track_num = idx + 1
+                    track_title = f"Track {track_num}"
+                    if metadata and 'tracks' in metadata and idx < len(metadata['tracks']):
+                        track_title = metadata['tracks'][idx].get('title', track_title)
+                    
+                    # Convert absolute path to relative or accessible path?
+                    # For local bridge, we might need the absolute path.
+                    # Or we serve it via Django static/media.
+                    # let's store the absolute path for Electron to read.
+                    mongo_tracks.append({
+                        'title': track_title,
+                        'trackNumber': track_num,
+                        'audioFile': str(path),
+                        'duration': 0 # Placeholder, would need mutagen to get real duration
+                    })
+
+                new_album = {
+                    'user': ObjectId(mongo_user_id),
+                    'title': album_title,
+                    'artist': artist_name,
+                    'coverArt': '', # TODO: Implement cover art upload/link
+                    'tracks': mongo_tracks,
+                    'createdAt': datetime.now()
+                }
+                
+                result = albums_collection.insert_one(new_album)
+                logger.info(f"Inserted album into MongoDB: {result.inserted_id}")
+
+            except Exception as e:
+                logger.error(f"MongoDB Bridge Failed: {e}")
+                # We don't fail the whole request, but we should warn
+                return Response({'status': 'completed_with_errors', 'message': f'Ripped but failed to save to MongoDB: {str(e)}', 'tracks': tracks_paths})
+
+        # 3. Save to Django SQLite (Legacy/Backup)
+        # We keep this for now so we don't break existing Django Admin views if they are used
+        if request.user.is_authenticated:
+            artist_name = metadata.get('artist', 'Unknown Artist')
+            album_title = metadata.get('album', 'Unknown Album')
+            
+            album = Album.objects.create(
+                user=request.user,
+                title=album_title,
+                artist=artist_name,
+            )
+            
+            for idx, path in enumerate(tracks_paths):
+                track_num = idx + 1
+                track_title = f"Track {track_num}"
+                if metadata and 'tracks' in metadata and idx < len(metadata['tracks']):
+                    track_title = metadata['tracks'][idx].get('title', track_title)
+                
+                Track.objects.create(
+                    album=album,
+                    title=track_title,
+                    track_number=track_num,
+                    audio_file=str(path)
+                )
+
+        return Response({'status': 'completed', 'message': 'Ripped and bridged to MongoDB'})
+
     except Exception as e:
         logger.error(f"Rip failed: {e}")
         return Response({'status': 'error', 'message': str(e)}, status=500)

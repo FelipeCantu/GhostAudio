@@ -17,7 +17,8 @@ export default function RegisterPage() {
         setError("");
 
         try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+            // Use relative path to ensure we hit Next.js API, not Django directly
+            const API_URL = "/api";
             const res = await fetch(`${API_URL}/auth/register/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

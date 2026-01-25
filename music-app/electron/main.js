@@ -1,9 +1,11 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
 const serve = require('electron-serve');
 const services = require('./services');
 
 let mainWindow;
+let backendProcess = null;
 
 const isDev = !app.isPackaged;
 const appServe = isDev ? null : serve({ directory: path.join(__dirname, '../out') });
@@ -25,8 +27,23 @@ function createWindow() {
     // In production, serve the app via electron-serve
     appServe(mainWindow).then(() => {
       mainWindow.loadURL('app://-');
-      // DEBUGGING: Open DevTools to see why it's white
-      // mainWindow.webContents.openDevTools();
+
+      // Spawn Backend
+      const backendExe = path.join(process.resourcesPath, 'ghost_backend.exe');
+      console.log('Spawning backend from:', backendExe);
+
+      backendProcess = spawn(backendExe, [], {
+        stdio: 'ignore',
+        env: {
+          ...process.env,
+          // Inject Production DB Connection String
+          MONGODB_URI: "mongodb+srv://felipecantujr:Chevelle1984@cluster0.yixlkpe.mongodb.net/dizc?retryWrites=true&w=majority&appName=Cluster0"
+        }
+      });
+
+      backendProcess.on('error', (err) => {
+        console.error('Failed to start backend:', err);
+      });
     });
   }
 
@@ -46,7 +63,7 @@ ipcMain.handle('rip-cd', async (event, args) => {
     if (!drive) throw new Error('No drive path provided');
 
     // We can send progress updates back to the renderer if we want
-    const tracks = await services.ripCD(drive, event.sender);
+    const tracks = await services.ripCD(args, event.sender);
     return { status: 'started', drive: drive, tracks: tracks };
     // Note: The original returned "started" immediately and simulated async.
     // JS is async by default, but IPC handlers await the result.
@@ -71,17 +88,18 @@ ipcMain.handle('rip-cd', async (event, args) => {
     // So the UI assumes it's async and fire-and-forget from the API perspective.
 
     // Let's match that: Start the process, return valid response.
-    ripInBackground(drive, event.sender);
+    ripInBackground(args, event.sender);
     return { status: 'started' };
+
   } catch (err) {
     console.error("IPC Error:", err);
     return { status: 'error', message: err.message };
   }
 });
 
-async function ripInBackground(drive, sender) {
+async function ripInBackground(args, sender) {
   try {
-    await services.ripCD(drive, sender);
+    await services.ripCD(args, sender);
     // Could send an event here if we updated UI to listen
     // sender.send('rip-complete'); 
   } catch (e) {
@@ -95,6 +113,10 @@ app.on('ready', () => {
 
 app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') {
+    // Kill backend
+    if (backendProcess) {
+      backendProcess.kill();
+    }
     app.quit();
   }
 });
