@@ -1,55 +1,115 @@
 "use client";
 
-import CDImporter from "@/components/CDImporter";
+import { useEffect } from "react";
 import { motion } from "framer-motion";
+import { useRouter } from "next/navigation";
+import Image from "next/image";
+import { useAuth } from "@/context/AuthContext";
+import DashboardLayout from "@/components/DashboardLayout";
+import Link from "next/link";
+import { Disc, PlayCircle, Plus } from "lucide-react";
 
 export default function Home() {
-  return (
-    <div className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-background text-foreground selection:bg-primary/20">
-      {/* Dynamic Background */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40vw] h-[40vw] rounded-full bg-blue-600/10 blur-[100px] animate-pulse" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-purple-600/10 blur-[100px] animate-pulse delay-700" />
-      </div>
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const router = useRouter();
 
-      <main className="z-10 w-full max-w-4xl px-6 flex flex-col items-center gap-12">
-        {/* Hero Section */}
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push("/login");
+    }
+  }, [isLoading, isAuthenticated, router]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen w-full flex flex-col items-center justify-center bg-[#0d3b66] text-[#faf0ca]">
+        <div className="w-16 h-16 border-4 border-[#f4d35e] border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-xl font-medium animate-pulse">Loading DiZC...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) return null;
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-10">
+
+        {/* Welcome Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-          className="text-center space-y-4"
+          transition={{ duration: 0.6 }}
+          className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#f4d35e] to-[#ee964b] p-8 md:p-12 text-[#0d3b66]"
         >
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
-            Ghost<span className="text-blue-500">Audio</span>
-          </h1>
-          <p className="text-lg md:text-xl text-muted-foreground max-w-lg mx-auto leading-relaxed">
-            Your personal high-fidelity music manager.
-            <br />
-            <span className="text-sm opacity-70">Experience your collection like never before.</span>
-          </p>
+          <div className="relative z-10 max-w-2xl">
+            <h1 className="text-4xl md:text-5xl font-bold mb-4">
+              Welcome back, {user?.username}
+            </h1>
+            <p className="text-lg md:text-xl font-medium opacity-90 mb-8">
+              Ready to spin some discs? Your high-fidelity collection is waiting.
+            </p>
+            <div className="flex flex-wrap gap-4">
+              <Link
+                href="/library"
+                className="px-6 py-3 bg-[#0d3b66] text-white font-bold rounded-xl hover:bg-black/80 transition-transform hover:scale-105 flex items-center gap-2"
+              >
+                <PlayCircle size={20} />
+                Go to Library
+              </Link>
+              <Link
+                href="/import"
+                className="px-6 py-3 bg-white/20 backdrop-blur-md text-[#0d3b66] border border-[#0d3b66]/20 font-bold rounded-xl hover:bg-white/30 transition-transform hover:scale-105 flex items-center gap-2"
+              >
+                <Plus size={20} />
+                Import New
+              </Link>
+            </div>
+          </div>
+
+          {/* Decorative Vinyl */}
+          <div className="absolute top-[-50px] right-[-50px] md:top-[-100px] md:right-[-100px] opacity-20 animate-[spin_20s_linear_infinite]">
+            <Disc size={400} />
+          </div>
         </motion.div>
 
-        {/* Importer Section */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.6, delay: 0.2, ease: "easeOut" }}
-          className="w-full"
-        >
-          <CDImporter />
-        </motion.div>
-      </main>
+        {/* Quick Stats / Recent (Placeholder) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.2 }}
+            className="p-6 rounded-2xl bg-white/5 border border-white/10"
+          >
+            <h3 className="text-xl font-bold mb-4 text-white">Quick Stats</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 rounded-xl bg-black/40">
+                <p className="text-sm text-zinc-400">Total Albums</p>
+                <p className="text-2xl font-bold text-[#f4d35e]">0</p>
+              </div>
+              <div className="p-4 rounded-xl bg-black/40">
+                <p className="text-sm text-zinc-400">Total Tracks</p>
+                <p className="text-2xl font-bold text-[#ee964b]">0</p>
+              </div>
+            </div>
+          </motion.div>
 
-      {/* Footer / Info */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1, duration: 1 }}
-        className="absolute bottom-6 text-xs text-muted-foreground/50 tracking-widest uppercase"
-      >
-        System Ready • v0.1.0
-      </motion.div>
-    </div>
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.3 }}
+            className="p-6 rounded-2xl bg-white/5 border border-white/10 flex flex-col justify-center items-center text-center space-y-4"
+          >
+            <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
+              <Disc className="text-zinc-400" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-white">Recently Added</h3>
+              <p className="text-sm text-zinc-500">No recent activity</p>
+            </div>
+          </motion.div>
+        </div>
+
+      </div>
+    </DashboardLayout>
   );
 }

@@ -4,6 +4,8 @@ import shutil
 import logging
 from pathlib import Path
 
+from . import cd_metadata
+
 logger = logging.getLogger(__name__)
 
 class CDRipper:
@@ -29,6 +31,10 @@ class CDRipper:
             bitmask >>= 1
         return drives
 
+    def get_cd_metadata(self, drive_path):
+        """Fetch metadata for the CD in the given drive"""
+        return cd_metadata.get_release_info(drive_path)
+
     def rip_track(self, drive_letter, track_number, output_filename):
         """Rip a single track using ffmpeg/cdparanoia or just copying if it's treated as files"""
         if not self.ffmpeg:
@@ -41,8 +47,11 @@ class CDRipper:
 
         # Simple ffmpeg command for windows (often complex, this is a placeholder for actual logic)
         try:
+            # Ensure output directory exists
+            output_filename.parent.mkdir(parents=True, exist_ok=True)
+            
             subprocess.run([
-                self.ffmpeg, '-i', f'{drive_letter}track{track_number:02d}.cda', 
+                self.ffmpeg, '-y', '-i', f'{drive_letter}track{track_number:02d}.cda', 
                 str(output_filename)
             ], check=True)
         except subprocess.CalledProcessError:
@@ -51,12 +60,47 @@ class CDRipper:
             with open(output_filename, 'wb') as f:
                 f.write(b'Error Ripping - Simulated Content')
         
-    def rip_cd(self, drive_path):
-        """Simulate ripping for now or use a placeholder until ffmpeg is confirmed working"""
+    def rip_cd(self, drive_path, metadata=None):
+        """Rip the CD, optionally using metadata to organize files"""
         results = []
-        # Simulate 3 tracks for demo
-        for i in range(1, 4):
-            filename = self.output_dir / f"Track_{i:02d}.wav"
-            self.rip_track(drive_path, i, filename)
-            results.append(str(filename))
+        
+        tracks_to_rip = []
+        
+        if metadata and 'tracks' in metadata:
+            tracks_to_rip = metadata['tracks']
+        else:
+            # Try to get honest track count
+            toc = cd_metadata.get_drive_toc(drive_path)
+            if toc:
+                count = toc[1]
+                for i in range(1, count + 1):
+                    tracks_to_rip.append({'track_number': i, 'title': f'Track {i}', 'artist': 'Unknown'})
+            else:
+                # Simulation default
+                for i in range(1, 4):
+                    tracks_to_rip.append({'track_number': i, 'title': f'Track_{i:02d}', 'artist': 'Unknown'})
+
+        # Determine Output Folder
+        output_base = self.output_dir
+        if metadata and 'artist' in metadata and 'album' in metadata:
+            artist = self._sanitize_filename(metadata['artist'])
+            album = self._sanitize_filename(metadata['album'])
+            output_base = output_base / artist / album
+            output_base.mkdir(parents=True, exist_ok=True)
+
+        for track in tracks_to_rip:
+            try:
+                num = int(track['track_number'])
+                title = self._sanitize_filename(track.get('title', f'Track {num}'))
+                filename = output_base / f"{num:02d} - {title}.wav"
+                
+                self.rip_track(drive_path, num, filename)
+                results.append(str(filename))
+            except Exception as e:
+                logger.error(f"Error processing track {track}: {e}")
+
         return results
+
+    def _sanitize_filename(self, name):
+        keep = (' ', '.', '_', '-')
+        return "".join(c for c in name if c.isalnum() or c in keep).strip()

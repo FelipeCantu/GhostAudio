@@ -1,11 +1,12 @@
 {
-  "name": "music-app",
+  "name": "dizc",
   "version": "0.1.0",
-  "description": "Ghost Music App Desktop",
+  "description": "DiZC - Your standalone high-fidelity music experience.",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "concurrently -k -n \"NEXT,DJANGO\" -c \"magenta,blue\" \"next dev\" \"npm run django\"",
+    "django": "cd ../backend && .\\venv\\Scripts\\python manage.py runserver",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -13,8 +14,8 @@
     "dist": "npm run build && electron-builder"
   },
   "build": {
-    "appId": "com.ghostrepo.musicapp",
-    "productName": "Ghost Music App",
+    "appId": "com.ghostrepo.dizc",
+    "productName": "DiZC",
     "files": [
       "electron/**/*",
       "out/**/*",
@@ -57,6 +58,7 @@
     "clsx": "^2.1.1",
     "electron-serve": "^1.1.0",
     "framer-motion": "^12.27.1",
+    "lucide-react": "^0.563.0",
     "tailwind-merge": "^3.4.0"
   }
 }

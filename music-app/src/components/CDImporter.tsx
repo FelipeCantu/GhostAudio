@@ -9,7 +9,10 @@ function cn(...inputs: (string | undefined | null | false)[]) {
     return twMerge(clsx(inputs));
 }
 
+import { useAuth } from "@/context/AuthContext";
+
 export default function CDImporter() {
+    const { token, isAuthenticated } = useAuth();
     const [drives, setDrives] = useState<string[]>([]);
     const [selectedDrive, setSelectedDrive] = useState<string | null>(null);
     const [status, setStatus] = useState<"idle" | "scanning" | "ripping" | "completed" | "error">("idle");
@@ -20,24 +23,37 @@ export default function CDImporter() {
         setMessage("Scanning for devices...");
 
         try {
-            // Use Electron IPC
+            // Check if running in Electron
             // @ts-ignore
-            const { ipcRenderer } = window.require('electron');
-            const data = await ipcRenderer.invoke('get-drives');
-
-            setDrives(data.drives || []);
-
-            if (data.drives && data.drives.length > 0) {
-                setSelectedDrive(data.drives[0]);
-                setMessage(`Found ${data.drives.length} drive(s).`);
+            if (window.electronAPI || window.require) {
+                // @ts-ignore
+                const { ipcRenderer } = window.require('electron');
+                const data = await ipcRenderer.invoke('get-drives');
+                setDrives(data.drives || []);
+                if (data.drives && data.drives.length > 0) {
+                    setSelectedDrive(data.drives[0]);
+                    setMessage(`Found ${data.drives.length} drive(s).`);
+                } else {
+                    setMessage("No optical drives found.");
+                }
             } else {
-                setMessage("No optical drives found.");
+                // Web Mode (Local Bridge)
+                const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/importer";
+                const res = await fetch(`${API_URL}/drives/`);
+                const data = await res.json();
+                setDrives(data.drives || []);
+                if (data.drives && data.drives.length > 0) {
+                    setSelectedDrive(data.drives[0]);
+                    setMessage(`Found ${data.drives.length} drive(s).`);
+                } else {
+                    setMessage("No optical drives found.");
+                }
             }
             setStatus("idle");
         } catch (err: any) {
             console.error(err);
             setStatus("error");
-            setMessage("Failed to access hardware services.");
+            setMessage("Failed to access hardware. Ensure Local Backend is running.");
         }
     };
 
@@ -51,20 +67,53 @@ export default function CDImporter() {
         setStatus("ripping");
         setMessage("Starting import process...");
         try {
-            // @ts-ignore
-            const { ipcRenderer } = window.require('electron');
-            const data = await ipcRenderer.invoke('rip-cd', { drive_path: selectedDrive });
 
-            if (data.status === "started") {
-                setMessage("Importing tracks...");
-                // Keep the fake polling for now as the backend is conceptually async
-                setTimeout(() => {
-                    setStatus("completed");
-                    setMessage("Import completed successfully.");
-                }, 5000);
+            // @ts-ignore
+            if (window.electronAPI || window.require) {
+                // Electron Mode
+                // @ts-ignore
+                const { ipcRenderer } = window.require('electron');
+                // Note: IPC implementation needs proper token handling too, but skipping for now or assumed handled in main
+                const data = await ipcRenderer.invoke('rip-cd', { drive_path: selectedDrive, token });
+                if (data.status === "started") {
+                    setMessage("Importing tracks...");
+                    setTimeout(() => {
+                        setStatus("completed");
+                        setMessage("Import completed successfully.");
+                    }, 5000);
+                } else {
+                    throw new Error("Import failed");
+                }
             } else {
-                setStatus("error");
-                setMessage("Failed to start import.");
+                // Web Mode
+                if (!isAuthenticated || !token) {
+                    setMessage("Please login to import music.");
+                    setStatus("error");
+                    return;
+                }
+
+                const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/importer";
+                const res = await fetch(`${API_URL}/rip/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        drive_path: selectedDrive,
+                        metadata: {} // Fetch metadata if possible or let backend do it
+                    })
+                });
+
+                const data = await res.json();
+                if (res.ok) {
+                    setMessage("Importing tracks...");
+                    setStatus("completed"); // Simplified for now
+                    setMessage("Import completed successfully. Added to your Library.");
+                } else {
+                    setMessage(data.detail || "Import failed.");
+                    setStatus("error");
+                }
             }
         } catch (err) {
             setStatus("error");
@@ -90,8 +139,8 @@ export default function CDImporter() {
                 <div className="relative p-8 space-y-8">
                     {/* Header */}
                     <div className="flex items-center gap-5">
-                        <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 shadow-lg shadow-blue-500/20">
-                            <svg className="w-7 h-7 text-white drop-shadow-md" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#f4d35e] to-[#ee964b] shadow-lg shadow-[#f4d35e]/20">
+                            <svg className="w-7 h-7 text-[#0d3b66] drop-shadow-sm" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
                             </svg>
                         </div>
@@ -109,7 +158,7 @@ export default function CDImporter() {
                                 <button
                                     onClick={() => scanDrives()}
                                     disabled={status === "scanning" || status === "ripping"}
-                                    className="text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                                    className="text-xs font-medium text-[#ee964b] hover:text-[#f4d35e] transition-colors disabled:opacity-50 flex items-center gap-1.5"
                                 >
                                     {status === "scanning" && (
                                         <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -123,10 +172,10 @@ export default function CDImporter() {
                                     whileHover={{ scale: 1.02 }}
                                     whileTap={{ scale: 0.98 }}
                                     onClick={() => scanDrives()}
-                                    className="cursor-pointer group relative overflow-hidden rounded-2xl border border-dashed border-zinc-700 hover:border-blue-500/50 hover:bg-white/5 transition-all p-8 text-center"
+                                    className="cursor-pointer group relative overflow-hidden rounded-2xl border border-dashed border-zinc-700 hover:border-[#ee964b]/50 hover:bg-white/5 transition-all p-8 text-center"
                                 >
                                     <p className="text-zinc-400 mb-3 text-sm">No optical drives detected</p>
-                                    <span className="inline-flex items-center justify-center px-4 py-1.5 rounded-full bg-zinc-800 text-xs font-medium text-zinc-300 group-hover:bg-blue-600/20 group-hover:text-blue-300 transition-colors">
+                                    <span className="inline-flex items-center justify-center px-4 py-1.5 rounded-full bg-zinc-800 text-xs font-medium text-zinc-300 group-hover:bg-[#ee964b]/20 group-hover:text-[#f4d35e] transition-colors">
                                         Tap to Scan
                                     </span>
                                 </motion.div>
@@ -135,7 +184,7 @@ export default function CDImporter() {
                                     <select
                                         value={selectedDrive || ""}
                                         onChange={(e) => setSelectedDrive(e.target.value)}
-                                        className="w-full appearance-none bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 rounded-xl px-4 py-3.5 pr-10 text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-all font-medium"
+                                        className="w-full appearance-none bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 rounded-xl px-4 py-3.5 pr-10 text-zinc-200 focus:outline-none focus:ring-2 focus:ring-[#ee964b]/30 transition-all font-medium"
                                     >
                                         {drives.map((drive) => (
                                             <option key={drive} value={drive}>{drive} - Audio CD</option>
@@ -167,8 +216,8 @@ export default function CDImporter() {
                                             {status === 'ripping' ? (
                                                 <div className="mt-0.5">
                                                     <span className="relative flex h-3 w-3">
-                                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                                                        <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#f4d35e] opacity-75"></span>
+                                                        <span className="relative inline-flex rounded-full h-3 w-3 bg-[#ee964b]"></span>
                                                     </span>
                                                 </div>
                                             ) : status === 'completed' ? (
@@ -196,7 +245,7 @@ export default function CDImporter() {
                                 status === "ripping"
                                     ? "bg-zinc-800 text-zinc-400 cursor-not-allowed border border-zinc-700"
                                     : selectedDrive
-                                        ? "bg-gradient-to-r from-blue-600 to-violet-600 text-white hover:shadow-blue-500/25 border border-transparent"
+                                        ? "bg-gradient-to-r from-[#f4d35e] to-[#ee964b] text-[#0d3b66] hover:shadow-[#f4d35e]/25 border border-transparent"
                                         : "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700"
                             )}
                         >
