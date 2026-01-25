@@ -1,4 +1,5 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+// Use relative path for Next.js internal API
+export const API_URL = "/api";
 
 export interface Track {
     id: number;

@@ -42,11 +42,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const fetchUser = async (authToken: string) => {
         try {
-            // Assuming you have an endpoint to get user info, e.g. /api/auth/me/
-            // Adjust URL to match your backend running on localhost:8000 or config
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+            // Use internal API
+            const API_URL = "/api";
 
-            const res = await fetch(`${API_URL}/auth/me/`, {
+            const res = await fetch(`${API_URL}/auth/me`, {
                 headers: {
                     Authorization: `Bearer ${authToken}`
                 }
