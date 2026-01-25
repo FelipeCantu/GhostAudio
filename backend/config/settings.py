@@ -16,12 +16,13 @@ if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append('.onrender.com') # Allow all render subdomains
 
 # CORS Configuration
-CORS_ALLOWED_ORIGINS = [
-    "https://ghost-audio.vercel.app",
-    "http://localhost:3000",
-]
-# Or allow all (less secure but easier for testing)
+# CORS Configuration
+# CORS_ALLOWED_ORIGINS = [
+#     "https://ghost-audio.vercel.app",
+#     "http://localhost:3000",
+# ]
 CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
 
 
 INSTALLED_APPS = [
