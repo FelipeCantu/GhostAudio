@@ -40,14 +40,14 @@ export default function LibraryPage() {
             >
                 <div className="mb-8 flex items-center justify-between">
                     <div>
-                        <h1 className="text-3xl font-bold text-white mb-2">My Library</h1>
-                        <p className="text-zinc-400">Your collection in high fidelity.</p>
+                        <h1 className="text-3xl font-bold text-foreground mb-2">My Library</h1>
+                        <p className="text-muted-foreground">Your collection in high fidelity.</p>
                     </div>
                 </div>
 
                 {loading ? (
                     <div className="flex justify-center py-20">
-                        <div className="w-10 h-10 border-4 border-[#f4d35e] border-t-transparent rounded-full animate-spin" />
+                        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
                     </div>
                 ) : error ? (
                     <div className="text-center py-20 bg-red-500/10 rounded-3xl border border-red-500/20">
@@ -57,15 +57,15 @@ export default function LibraryPage() {
                 ) : albums.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-20 text-center border-2 border-dashed border-white/10 rounded-3xl bg-white/5">
                         <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mb-6">
-                            <Disc size={40} className="text-zinc-500" />
+                            <Disc size={40} className="text-muted-foreground" />
                         </div>
-                        <h3 className="text-xl font-medium text-white mb-2">Your library looks empty</h3>
-                        <p className="text-zinc-400 max-w-sm mb-6">
+                        <h3 className="text-xl font-medium text-foreground mb-2">Your library looks empty</h3>
+                        <p className="text-muted-foreground max-w-sm mb-6">
                             Start by importing some CDs or adding music locally.
                         </p>
                         <a
                             href="/import"
-                            className="px-6 py-3 bg-[#f4d35e] text-[#0d3b66] font-bold rounded-xl hover:bg-[#ffe066] transition-colors"
+                            className="px-6 py-3 bg-primary text-primary-foreground font-bold rounded-xl hover:bg-primary/90 transition-colors"
                         >
                             Go to Importer
                         </a>

@@ -31,6 +31,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "../backend/dist/ghost_backend.exe",
+        "to": "ghost_backend.exe"
       }
     ],
     "win": {
@@ -39,6 +43,8 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -55,10 +61,13 @@
     "wait-on": "^9.0.3"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "electron-serve": "^1.1.0",
     "framer-motion": "^12.27.1",
+    "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.563.0",
+    "mongoose": "^9.1.5",
     "tailwind-merge": "^3.4.0"
   }
 }

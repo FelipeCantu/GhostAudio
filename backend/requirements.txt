@@ -10,3 +10,9 @@ psycopg2-binary
 pillow
 # CD Metadata
 musicbrainzngs
+# Bridge
+pymongo
+python-dotenv
+# Build & Serve
+pyinstaller
+waitress
