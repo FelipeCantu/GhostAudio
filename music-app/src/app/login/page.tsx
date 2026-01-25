@@ -16,8 +16,8 @@ export default function LoginPage() {
         setError("");
 
         try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
-            const res = await fetch(`${API_URL}/auth/login/`, {
+            // Use internal Next.js API
+            const res = await fetch("/api/auth/login", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ username, password }),
