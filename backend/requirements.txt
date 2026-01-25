@@ -1,7 +1,11 @@
-django>=5.0
+django
 django-cors-headers
-requests
-gunicorn
-psycopg2-binary
-dj-database-url
 whitenoise
+dj-database-url
+# New Dependencies for Auth & DB
+djangorestframework
+djangorestframework-simplejwt
+psycopg2-binary
+pillow
+# CD Metadata
+musicbrainzngs
