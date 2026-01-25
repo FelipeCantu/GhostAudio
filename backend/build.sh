@@ -2,13 +2,10 @@
 # exit on error
 set -o errexit
 
-# Change directory to the folder where this script is located (backend)
+# Ensure we are in the backend directory
 cd "$(dirname "$0")"
 
 pip install -r requirements.txt
 
-# Collect static files
 python manage.py collectstatic --no-input
-
-# Apply database migrations
 python manage.py migrate

@@ -2,8 +2,16 @@
 import ctypes
 import hashlib
 import logging
+import os
 import musicbrainzngs
-from ctypes import windll, create_string_buffer
+
+if os.name == 'nt':
+    from ctypes import windll, create_string_buffer
+else:
+    # Dummy definitions for Linux/Render
+    windll = None
+    create_string_buffer = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +20,10 @@ musicbrainzngs.set_useragent("GhostAudio", "0.1", "http://localhost")
 
 def send_mci_command(command_str):
     """Send an MCI command string to winmm.dll"""
+    if not windll:
+        logger.warning("MCI commands not supported on this platform (Non-Windows)")
+        return None
+
     response_buffer = create_string_buffer(255)
     error_code = windll.winmm.mciSendStringA(
         command_str.encode('ascii'), 

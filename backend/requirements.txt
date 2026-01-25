@@ -2,6 +2,7 @@ django
 django-cors-headers
 whitenoise
 dj-database-url
+gunicorn
 # New Dependencies for Auth & DB
 djangorestframework
 djangorestframework-simplejwt
