@@ -23,6 +23,7 @@ if RENDER_EXTERNAL_HOSTNAME:
 
 # CORS Configuration
 # CORS Configuration
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
     "https://ghost-audio.vercel.app",
     "http://localhost:3000",
