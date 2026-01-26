@@ -38,54 +38,40 @@ interface AuthResponse {
 export const api = {
     auth: {
         login: async (credentials: any): Promise<AuthResponse> => {
-            if (isElectron()) {
-                return await (window as any).electronAPI.invoke('auth-login', credentials);
-            } else {
-                const res = await fetch(`${NEXT_API_URL}/api/auth/login/`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(credentials)
-                });
-                return await res.json();
-            }
+            // Always use Cloud API for Auth
+            const res = await fetch(`${NEXT_API_URL}/api/auth/login/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(credentials)
+            });
+            return await res.json();
         },
         register: async (data: any): Promise<AuthResponse> => {
-            if (isElectron()) {
-                return await (window as any).electronAPI.invoke('auth-register', data);
-            } else {
-                const res = await fetch(`${NEXT_API_URL}/api/auth/register/`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                return await res.json();
-            }
+            // Always use Cloud API for Auth
+            const res = await fetch(`${NEXT_API_URL}/api/auth/register/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return await res.json();
         },
         me: async (token: string): Promise<any> => {
-            if (isElectron()) {
-                return await (window as any).electronAPI.invoke('auth-me', token);
-            } else {
-                const res = await fetch(`${NEXT_API_URL}/api/auth/me/`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (!res.ok) throw new Error("Failed to fetch user");
-                return await res.json();
-            }
+            // Always use Cloud API for Auth
+            const res = await fetch(`${NEXT_API_URL}/api/auth/me/`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) throw new Error("Failed to fetch user");
+            return await res.json();
         }
     },
     library: {
         getAlbums: async (token: string): Promise<Album[]> => {
-            if (isElectron()) {
-                const res = await (window as any).electronAPI.invoke('library-get', token);
-                if (res.error) throw new Error(res.error);
-                return res;
-            } else {
-                const res = await fetch(`${NEXT_API_URL}/api/library/`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (!res.ok) throw new Error("Failed to fetch library");
-                return await res.json();
-            }
+            // Always use Cloud API for Library
+            const res = await fetch(`${NEXT_API_URL}/api/library/`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) throw new Error("Failed to fetch library");
+            return await res.json();
         }
     },
     system: {
