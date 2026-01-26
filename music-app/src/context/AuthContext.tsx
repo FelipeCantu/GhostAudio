@@ -43,14 +43,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const fetchUser = async (authToken: string) => {
         try {
-            // Use Electron IPC
-            const { ipcRenderer } = (window as any).require('electron');
-            const userData = await ipcRenderer.invoke('auth-me', authToken);
-
-            if (userData && !userData.error) {
-                setUser(userData);
+            // Check environment
+            // @ts-ignore
+            if (window.electronAPI) {
+                // Electron IPC
+                // @ts-ignore
+                const userData = await window.electronAPI.invoke('auth-me', authToken);
+                if (userData && !userData.error) {
+                    setUser(userData);
+                } else {
+                    logout(false);
+                }
             } else {
-                logout(false);
+                // Web Fetch Fallback
+                const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+                const res = await fetch(`${API_URL}/api/auth/me/`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (res.ok) {
+                    const userData = await res.json();
+                    setUser(userData);
+                } else {
+                    logout(false);
+                }
             }
         } catch (err) {
             console.error("Failed to fetch user", err);

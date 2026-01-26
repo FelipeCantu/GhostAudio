@@ -23,12 +23,11 @@ export default function CDImporter() {
         setMessage("Scanning for devices...");
 
         try {
-            // Check if running in Electron
+            // Check if running in Electron with preload API
             // @ts-ignore
-            if (window.electronAPI || window.require) {
+            if (window.electronAPI) {
                 // @ts-ignore
-                const { ipcRenderer } = window.require('electron');
-                const data = await ipcRenderer.invoke('get-drives');
+                const data = await window.electronAPI.invoke('get-drives');
                 setDrives(data.drives || []);
                 if (data.drives && data.drives.length > 0) {
                     setSelectedDrive(data.drives[0]);
@@ -60,12 +59,12 @@ export default function CDImporter() {
         try {
 
             // @ts-ignore
-            if (window.electronAPI || window.require) {
+            // @ts-ignore
+            if (window.electronAPI) {
                 // Electron Mode
                 // @ts-ignore
-                const { ipcRenderer } = window.require('electron');
                 // Pass mongo_user_id (user.id) to the backend via Electron
-                const data = await ipcRenderer.invoke('rip-cd', {
+                const data = await window.electronAPI.invoke('rip-cd', {
                     drive_path: selectedDrive,
                     token,
                     mongo_user_id: user?.id
