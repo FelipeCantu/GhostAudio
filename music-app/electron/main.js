@@ -1,6 +1,9 @@
-require('dotenv').config({ path: path.join(__dirname, '../.env.local') });
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
+const envPath = app.isPackaged
+  ? path.join(process.resourcesPath, '.env.local')
+  : path.join(__dirname, '../.env.local');
+require('dotenv').config({ path: envPath });
 const { spawn } = require('child_process');
 const serve = require('electron-serve');
 const services = require('./services');

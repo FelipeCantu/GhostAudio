@@ -35,6 +35,10 @@
       {
         "from": "../backend/dist/ghost_backend.exe",
         "to": "ghost_backend.exe"
+      },
+      {
+        "from": ".env.local",
+        "to": ".env.local"
       }
     ],
     "win": {
