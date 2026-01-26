@@ -15,11 +15,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
 
     return (
-        <div className="flex min-h-screen bg-[#0d3b66] text-[#faf0ca]">
+        <div className="flex min-h-screen bg-background text-foreground">
             {/* Background elements */}
             <div className="fixed inset-0 pointer-events-none z-0">
-                <div className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-[#f4d35e]/5 blur-[120px] animate-pulse" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[50vw] h-[50vw] rounded-full bg-[#ee964b]/5 blur-[120px] animate-pulse delay-700" />
+                <div className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-primary/5 blur-[120px] animate-pulse" />
+                <div className="absolute bottom-[-10%] right-[-10%] w-[50vw] h-[50vw] rounded-full bg-border/5 blur-[120px] animate-pulse delay-700" />
             </div>
 
             <Sidebar

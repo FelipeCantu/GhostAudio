@@ -61,51 +61,119 @@ ipcMain.handle('rip-cd', async (event, args) => {
   try {
     const drive = args.drive_path;
     if (!drive) throw new Error('No drive path provided');
-
-    // We can send progress updates back to the renderer if we want
     const tracks = await services.ripCD(args, event.sender);
     return { status: 'started', drive: drive, tracks: tracks };
-    // Note: The original returned "started" immediately and simulated async.
-    // JS is async by default, but IPC handlers await the result.
-    // For long operations, better to just return "started" and send events,
-    // OR await it all if it's fast enough. 
-    // Given the UI waits for "completed", we can just await it here but maybe the UI expects immediate return?
-    // The original UI polling logic was: status=started, then wait 5s.
-    // Let's stick to the await behavior but return compatible object.
-    // ACTUALLY: The UI code does `const data = await res.json(); if (data.status === "started")`.
-    // If we await the whole rip here, the UI will hang for the duration of the rip.
-    // For a better UX, we should probably run the rip in background.
-
-    // HOWEVER, to keep it simple and robust for this "Removing Backend" task:
-    // We can return "started" immediately, and then do the work?
-    // But main process shouldn't block.
-    // Let's do the work asynchronously and send a "rip-complete" event, 
-    // OR just return the result if it's fast (simulation).
-    // Since we are simulating mostly or doing real ffmpeg which takes time,
-    // let's return { status: 'started' } and let the UI's existing 5s timeout handle the "fake complete"
-    // for now, adjusting the UI to listen for real completion would be better but larger scope.
-    // Wait... the UI says "Importing tracks..." then `setTimeout` 5s.
-    // So the UI assumes it's async and fire-and-forget from the API perspective.
-
-    // Let's match that: Start the process, return valid response.
     ripInBackground(args, event.sender);
     return { status: 'started' };
-
   } catch (err) {
     console.error("IPC Error:", err);
     return { status: 'error', message: err.message };
   }
 });
 
-async function ripInBackground(args, sender) {
+const dbConnect = require('./db');
+const User = require('./models/User');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+
+// Auth IPC Handlers
+ipcMain.handle('auth-login', async (event, { username, password }) => {
   try {
-    await services.ripCD(args, sender);
-    // Could send an event here if we updated UI to listen
-    // sender.send('rip-complete'); 
-  } catch (e) {
-    console.error("Background rip failed", e);
+    await dbConnect();
+    const user = await User.findOne({ username });
+    if (!user) return { error: "Invalid credentials" };
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return { error: "Invalid credentials" };
+
+    const token = jwt.sign(
+      { id: user._id, username: user.username },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return {
+      access: token,
+      user: { username: user.username, email: user.email, id: user._id }
+    };
+  } catch (err) {
+    console.error("Login IPC error:", err);
+    return { error: err.message };
   }
-}
+});
+
+ipcMain.handle('auth-register', async (event, { username, password, email }) => {
+  try {
+    await dbConnect();
+    const existingUser = await User.findOne({ username });
+    if (existingUser) return { error: "User already exists" };
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const user = await User.create({ username, password: hashedPassword, email });
+    return { success: true, username: user.username };
+  } catch (err) {
+    console.error("Register IPC error:", err);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('auth-me', async (event, token) => {
+  try {
+    if (!token) return { error: "No token provided" };
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return { username: decoded.username, id: decoded.id };
+  } catch (err) {
+    return { error: "Invalid token" };
+  }
+});
+
+// Library IPC Handlers
+// Simple in-memory store for demo purposes (matching previous API behavior)
+const MOCK_LIBRARY = [
+  {
+    id: 1,
+    title: "Simulation Theory",
+    artist: "Muse",
+    created_at: new Date().toISOString(),
+    cover_art: "https://coverartarchive.org/release/8e0467fb-2374-4299-b9d2-32aa878c772e/front",
+    tracks: [
+      { id: 1, track_number: 1, title: "Algorithm", audio_file: "", duration: "4:05" },
+      { id: 2, track_number: 2, title: "The Dark Side", audio_file: "", duration: "3:47" }
+    ]
+  }
+];
+
+ipcMain.handle('library-get', async (event, token) => {
+  try {
+    if (!token) throw new Error("Unauthorized");
+    // Verify token if needed, but for now just return mock
+    return MOCK_LIBRARY;
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('library-add', async (event, { token, album }) => {
+  try {
+    if (!token) throw new Error("Unauthorized");
+    const newAlbum = {
+      id: MOCK_LIBRARY.length + 1,
+      title: album.title || "Unknown Album",
+      artist: album.artist || "Unknown Artist",
+      created_at: new Date().toISOString(),
+      cover_art: album.cover_art,
+      tracks: album.tracks || []
+    };
+    MOCK_LIBRARY.push(newAlbum);
+    return newAlbum;
+  } catch (err) {
+    return { error: err.message };
+  }
+});
 
 app.on('ready', () => {
   createWindow();

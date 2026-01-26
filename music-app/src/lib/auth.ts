@@ -4,6 +4,9 @@ import dbConnect from './db';
 import User from '@/models/User';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+    console.warn("WARNING: Using fallback JWT secret in production. Please set JWT_SECRET environment variable.");
+}
 
 export async function createUser(username: string, password: string, email?: string) {
     await dbConnect();
