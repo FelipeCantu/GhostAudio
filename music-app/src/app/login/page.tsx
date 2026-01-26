@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { login as apiLogin } from "@/services/api";
 import Link from "next/link";
 import Image from "next/image";
 
@@ -16,9 +17,7 @@ export default function LoginPage() {
         setError("");
 
         try {
-            // Use Electron IPC
-            const { ipcRenderer } = (window as any).require('electron');
-            const data = await ipcRenderer.invoke('auth-login', { username, password });
+            const data = await apiLogin(username, password);
 
             if (!data.error) {
                 login(data.access, data.refresh);
@@ -89,7 +88,7 @@ export default function LoginPage() {
                 </form>
 
                 <div className="text-center text-sm text-zinc-500">
-                    Don't have an account?{" "}
+                    Don&apos;t have an account?{" "}
                     <Link href="/register" className="text-primary hover:text-border font-medium hover:underline transition-colors">
                         Register
                     </Link>

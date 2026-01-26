@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { getDrives, ripCD, isElectron } from "@/services/api";
 
 function cn(...inputs: (string | undefined | null | false)[]) {
     return twMerge(clsx(inputs));
@@ -23,25 +24,22 @@ export default function CDImporter() {
         setMessage("Scanning for devices...");
 
         try {
-            // Check if running in Electron
-            // @ts-ignore
-            if (window.electronAPI || window.require) {
-                // @ts-ignore
-                const { ipcRenderer } = window.require('electron');
-                const data = await ipcRenderer.invoke('get-drives');
+            if (isElectron()) {
+                const data = await getDrives();
                 setDrives(data.drives || []);
                 if (data.drives && data.drives.length > 0) {
                     setSelectedDrive(data.drives[0]);
                     setMessage(`Found ${data.drives.length} drive(s).`);
+                    setStatus("idle");
                 } else {
                     setMessage("No optical drives found.");
+                    setStatus("idle");
                 }
             } else {
                 setMessage("CD Import is only available in the Desktop App.");
                 setStatus("error");
             }
-            setStatus("idle");
-        } catch (err: any) {
+        } catch (err) {
             console.error(err);
             setStatus("error");
             setMessage("Failed to access hardware. Ensure Local Backend is running.");
@@ -58,14 +56,8 @@ export default function CDImporter() {
         setStatus("ripping");
         setMessage("Starting import process...");
         try {
-
-            // @ts-ignore
-            if (window.electronAPI || window.require) {
-                // Electron Mode
-                // @ts-ignore
-                const { ipcRenderer } = window.require('electron');
-                // Pass mongo_user_id (user.id) to the backend via Electron
-                const data = await ipcRenderer.invoke('rip-cd', {
+            if (isElectron()) {
+                const data = await ripCD({
                     drive_path: selectedDrive,
                     token,
                     mongo_user_id: user?.id
@@ -85,6 +77,7 @@ export default function CDImporter() {
                 }
             } else {
                 setMessage("CD Import is only available in the Desktop App.");
+                setStatus("error");
                 return;
             }
         } catch (err) {

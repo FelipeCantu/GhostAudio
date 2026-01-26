@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { register as apiRegister } from "@/services/api";
 import Link from "next/link";
 import Image from "next/image";
 
@@ -17,9 +18,7 @@ export default function RegisterPage() {
         setError("");
 
         try {
-            // Use Electron IPC
-            const { ipcRenderer } = (window as any).require('electron');
-            const data = await ipcRenderer.invoke('auth-register', { username, email, password });
+            const data = await apiRegister(username, email, password);
 
             if (data.success) {
                 // Redirect to login after successful registration

@@ -2,17 +2,12 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-
-interface User {
-    id: string;
-    username: string;
-    email: string;
-}
+import { getMe, User } from "@/services/api";
 
 interface AuthContextType {
     user: User | null;
     token: string | null;
-    login: (token: string, refresh: string) => void;
+    login: (token: string, refresh?: string) => void;
     logout: () => void;
     isAuthenticated: boolean;
     isLoading: boolean;
@@ -43,12 +38,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const fetchUser = async (authToken: string) => {
         try {
-            // Use Electron IPC
-            const { ipcRenderer } = (window as any).require('electron');
-            const userData = await ipcRenderer.invoke('auth-me', authToken);
+            const userData = await getMe(authToken);
 
-            if (userData && !userData.error) {
-                setUser(userData);
+            if (userData && !('error' in userData)) {
+                setUser(userData as User);
             } else {
                 logout(false);
             }
@@ -60,9 +53,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
-    const login = (accessToken: string, refreshToken: string) => {
+    const login = (accessToken: string, refreshToken?: string) => {
         localStorage.setItem("accessToken", accessToken);
-        localStorage.setItem("refreshToken", refreshToken);
+        if (refreshToken) {
+            localStorage.setItem("refreshToken", refreshToken);
+        } else {
+            localStorage.removeItem("refreshToken");
+        }
+
         setToken(accessToken);
         // We can optimistically set loading to true while we fetch user details, 
         // or just fetch user details and then route.
