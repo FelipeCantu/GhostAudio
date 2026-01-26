@@ -1,4 +1,12 @@
 // Use relative path for Next.js internal API
+export interface Track {
+    id: number;
+    title: string;
+    track_number: number;
+    audio_file: string;
+    duration?: string;
+}
+
 export interface Album {
     id: number;
     title: string;
