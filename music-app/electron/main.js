@@ -1,6 +1,7 @@
+require('dotenv').config({ path: path.join(__dirname, '../.env.local') });
 const { app, BrowserWindow, ipcMain } = require('electron');
-const { spawn } = require('child_process');
 const path = require('path');
+const { spawn } = require('child_process');
 const serve = require('electron-serve');
 const services = require('./services');
 
@@ -38,7 +39,7 @@ function createWindow() {
         env: {
           ...process.env,
           // Inject Production DB Connection String
-          MONGODB_URI: "mongodb+srv://felipecantujr:Chevelle1984@cluster0.yixlkpe.mongodb.net/dizc?retryWrites=true&w=majority&appName=Cluster0"
+          MONGODB_URI: process.env.MONGODB_URI
         }
       });
 
