@@ -10,6 +10,7 @@ function cn(...inputs: (string | undefined | null | false)[]) {
 }
 
 import { useAuth } from "@/context/AuthContext";
+import { api } from "@/services/api";
 
 export default function CDImporter() {
     const { user, token, isAuthenticated } = useAuth();
@@ -23,27 +24,19 @@ export default function CDImporter() {
         setMessage("Scanning for devices...");
 
         try {
-            // Check if running in Electron with preload API
-            // @ts-ignore
-            if (window.electronAPI) {
-                // @ts-ignore
-                const data = await window.electronAPI.invoke('get-drives');
-                setDrives(data.drives || []);
-                if (data.drives && data.drives.length > 0) {
-                    setSelectedDrive(data.drives[0]);
-                    setMessage(`Found ${data.drives.length} drive(s).`);
-                } else {
-                    setMessage("No optical drives found.");
-                }
+            const data = await api.system.getDrives();
+            setDrives(data.drives || []);
+            if (data.drives && data.drives.length > 0) {
+                setSelectedDrive(data.drives[0]);
+                setMessage(`Found ${data.drives.length} drive(s).`);
             } else {
-                setMessage("CD Import is only available in the Desktop App.");
-                setStatus("error");
+                setMessage("No optical drives found.");
             }
             setStatus("idle");
         } catch (err: any) {
             console.error(err);
             setStatus("error");
-            setMessage("Failed to access hardware. Ensure Local Backend is running.");
+            setMessage(err.message || "Failed to access hardware.");
         }
     };
 
@@ -57,34 +50,23 @@ export default function CDImporter() {
         setStatus("ripping");
         setMessage("Starting import process...");
         try {
+            const data = await api.system.ripCd({
+                drive_path: selectedDrive,
+                token,
+                mongo_user_id: user?.id
+            });
 
-            // @ts-ignore
-            // @ts-ignore
-            if (window.electronAPI) {
-                // Electron Mode
-                // @ts-ignore
-                // Pass mongo_user_id (user.id) to the backend via Electron
-                const data = await window.electronAPI.invoke('rip-cd', {
-                    drive_path: selectedDrive,
-                    token,
-                    mongo_user_id: user?.id
-                });
-
-                if (data.status === "started" || data.status === "completed") {
-                    setMessage("Importing tracks...");
-                    // If it returns completed immediately (simulated), we still show success
-                    // If it returns started, we wait (or the service handles it)
-                    // For now, let's keep the timeout as a UI feedback loop if the backend is async
-                    setTimeout(() => {
-                        setStatus("completed");
-                        setMessage("Import completed successfully.");
-                    }, 5000);
-                } else {
-                    throw new Error("Import failed");
-                }
+            if (data.status === "started" || data.status === "completed") {
+                setMessage("Importing tracks...");
+                // If it returns completed immediately (simulated), we still show success
+                // If it returns started, we wait (or the service handles it)
+                // For now, let's keep the timeout as a UI feedback loop if the backend is async
+                setTimeout(() => {
+                    setStatus("completed");
+                    setMessage("Import completed successfully.");
+                }, 5000);
             } else {
-                setMessage("CD Import is only available in the Desktop App.");
-                return;
+                throw new Error("Import failed");
             }
         } catch (err) {
             setStatus("error");

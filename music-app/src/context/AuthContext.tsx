@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { api } from "@/services/api";
 
 interface User {
     id: string;
@@ -43,32 +44,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const fetchUser = async (authToken: string) => {
         try {
-            // Check environment
-            // @ts-ignore
-            if (window.electronAPI) {
-                // Electron IPC
-                // @ts-ignore
-                const userData = await window.electronAPI.invoke('auth-me', authToken);
-                if (userData && !userData.error) {
-                    setUser(userData);
-                } else {
-                    logout(false);
-                }
+            const userData = await api.auth.me(authToken);
+            if (userData && !userData.error) {
+                setUser(userData);
             } else {
-                // Web Fetch Fallback
-                const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-                const res = await fetch(`${API_URL}/api/auth/me/`, {
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`
-                    }
-                });
-
-                if (res.ok) {
-                    const userData = await res.json();
-                    setUser(userData);
-                } else {
-                    logout(false);
-                }
+                logout(false);
             }
         } catch (err) {
             console.error("Failed to fetch user", err);

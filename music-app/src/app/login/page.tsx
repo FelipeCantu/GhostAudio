@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import Link from "next/link";
 import Image from "next/image";
+import { api } from "@/services/api";
 
 export default function LoginPage() {
     const { login } = useAuth();
@@ -16,11 +17,11 @@ export default function LoginPage() {
         setError("");
 
         try {
-            // Use Electron IPC
-            const { ipcRenderer } = (window as any).require('electron');
-            const data = await ipcRenderer.invoke('auth-login', { username, password });
+            // Use Unified API
+            const data = await api.auth.login({ username, password });
 
             if (!data.error) {
+                // @ts-ignore
                 login(data.access, data.refresh);
             } else {
                 setError(data.error || "Login failed");

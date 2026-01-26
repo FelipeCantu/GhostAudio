@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import { api } from "@/services/api";
 
 export default function RegisterPage() {
     const router = useRouter();
@@ -17,9 +18,8 @@ export default function RegisterPage() {
         setError("");
 
         try {
-            // Use Electron IPC
-            const { ipcRenderer } = (window as any).require('electron');
-            const data = await ipcRenderer.invoke('auth-register', { username, email, password });
+            // Use Unified API
+            const data = await api.auth.register({ username, email, password });
 
             if (data.success) {
                 // Redirect to login after successful registration
