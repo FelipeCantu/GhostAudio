@@ -20,7 +20,7 @@ function createWindow() {
     height: 800,
     webPreferences: {
       nodeIntegration: true, // Keeping enabled for now to avoid breaking other parts, but preload is preferred
-      contextIsolation: false, // Keeping false for now as we transition, but ideally should be true eventually
+      contextIsolation: true, // Keeping false for now as we transition, but ideally should be true eventually
       preload: path.join(__dirname, 'preload.js'),
     },
     icon: path.join(__dirname, '../build/icon.ico'),
