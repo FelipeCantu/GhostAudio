@@ -19,12 +19,23 @@ export interface Album {
 }
 
 export async function fetchAlbums(token: string): Promise<Album[]> {
-    const { ipcRenderer } = (window as any).require('electron');
-    const res = await ipcRenderer.invoke('library-get', token);
+    // @ts-ignore
+    if (window.electronAPI) {
+        // @ts-ignore
+        const res = await window.electronAPI.invoke('library-get', token);
+        if (res.error) throw new Error(res.error);
+        return res;
+    } else {
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const res = await fetch(`${API_URL}/api/library/`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
 
-    if (res.error) {
-        throw new Error(res.error);
+        if (!res.ok) throw new Error("Failed to fetch library");
+        return await res.json();
     }
 
-    return res;
+
 }
