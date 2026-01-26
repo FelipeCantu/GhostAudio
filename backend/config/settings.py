@@ -23,12 +23,12 @@ if RENDER_EXTERNAL_HOSTNAME:
 
 # CORS Configuration
 # CORS Configuration
-# CORS_ALLOWED_ORIGINS = [
-#     "https://ghost-audio.vercel.app",
-#     "http://localhost:3000",
-# ]
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [
+    "https://ghost-audio.vercel.app",
+    "http://localhost:3000",
+]
 CORS_ALLOW_CREDENTIALS = True
+
 
 
 INSTALLED_APPS = [
@@ -112,7 +112,7 @@ if not DEBUG:
     STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOW_ALL_ORIGINS = True
+
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (

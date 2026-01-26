@@ -1,6 +1,6 @@
-<center>
-  ![DiZC Logo](logo.png)
-</center>
+<div align="center">
+  <img src="logo.png" alt="DiZC Logo" width="200" />
+</div>
 
 # DiZC - High Fidelity Digital Music Library
 
