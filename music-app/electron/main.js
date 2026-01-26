@@ -18,6 +18,7 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: false, // For easier IPC in prototype
     },
+    icon: path.join(__dirname, '../build/icon.ico'),
   });
 
   if (isDev) {
