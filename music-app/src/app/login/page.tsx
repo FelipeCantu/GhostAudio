@@ -5,29 +5,37 @@ import { useAuth } from "@/context/AuthContext";
 import Link from "next/link";
 import Image from "next/image";
 import { api } from "@/services/api";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 export default function LoginPage() {
     const { login } = useAuth();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
+    const [isLoading, setIsLoading] = useState(false);
+    const [success, setSuccess] = useState("");
     const [error, setError] = useState("");
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+        setSuccess("");
+        setIsLoading(true);
 
         try {
             // Use Unified API
             const data = await api.auth.login({ username, password });
 
             if (!data.error) {
+                setSuccess("Login successful! Redirecting...");
                 // @ts-ignore
                 login(data.access, data.refresh);
             } else {
                 setError(data.error || "Login failed");
+                setIsLoading(false);
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : "An error occurred.");
+            setIsLoading(false);
         }
     };
 
@@ -54,8 +62,14 @@ export default function LoginPage() {
                 </div>
 
                 {error && (
-                    <div className="p-4 bg-red-900/30 border border-red-500/20 text-red-200 text-sm rounded-xl">
+                    <div className="p-4 bg-red-900/30 border border-red-500/20 text-red-200 text-sm rounded-xl animate-in fade-in slide-in-from-top-2">
                         {error}
+                    </div>
+                )}
+
+                {success && (
+                    <div className="p-4 bg-green-900/30 border border-green-500/20 text-green-200 text-sm rounded-xl animate-in fade-in slide-in-from-top-2">
+                        {success}
                     </div>
                 )}
 
@@ -66,7 +80,8 @@ export default function LoginPage() {
                             type="text"
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
-                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
+                            disabled={isLoading}
+                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all disabled:opacity-50"
                             required
                         />
                     </div>
@@ -76,16 +91,25 @@ export default function LoginPage() {
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
+                            disabled={isLoading}
+                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all disabled:opacity-50"
                             required
                         />
                     </div>
 
                     <button
                         type="submit"
-                        className="w-full py-3.5 px-4 bg-gradient-to-r from-primary to-border text-primary-foreground font-bold rounded-xl hover:shadow-lg hover:shadow-primary/20 transition-all transform hover:scale-[1.02] active:scale-[0.98]"
+                        disabled={isLoading}
+                        className="w-full py-3.5 px-4 bg-gradient-to-r from-primary to-border text-primary-foreground font-bold rounded-xl hover:shadow-lg hover:shadow-primary/20 transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed flex justify-center items-center"
                     >
-                        Sign In
+                        {isLoading ? (
+                            <>
+                                <LoadingSpinner className="mr-2" />
+                                Signing In...
+                            </>
+                        ) : (
+                            "Sign In"
+                        )}
                     </button>
                 </form>
 

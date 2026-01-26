@@ -31,6 +31,8 @@ interface AuthResponse {
     user?: any;
     error?: string;
     success?: boolean;
+    id?: number;
+    username?: string;
 }
 
 export const api = {
