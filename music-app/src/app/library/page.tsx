@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { Disc } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { fetchAlbums, Album } from "@/services/api";
+import { api, Album } from "@/services/api";
 import AlbumCard from "@/components/AlbumCard";
 
 export default function LibraryPage() {
@@ -18,7 +18,7 @@ export default function LibraryPage() {
         const loadAlbums = async () => {
             if (!token) return;
             try {
-                const data = await fetchAlbums(token);
+                const data = await api.library.getAlbums(token);
                 setAlbums(data);
             } catch (err) {
                 setError("Failed to load your library.");
