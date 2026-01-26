@@ -17,32 +17,27 @@ export default function RegisterPage() {
         setError("");
 
         try {
-            // Use relative path to ensure we hit Next.js API, not Django directly
-            const API_URL = "/api";
-            const res = await fetch(`${API_URL}/auth/register/`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, email, password }),
-            });
+            // Use Electron IPC
+            const { ipcRenderer } = (window as any).require('electron');
+            const data = await ipcRenderer.invoke('auth-register', { username, email, password });
 
-            if (res.ok) {
+            if (data.success) {
                 // Redirect to login after successful registration
                 router.push("/login");
             } else {
-                const data = await res.json();
-                setError(JSON.stringify(data));
+                setError(data.error || "Registration failed");
             }
         } catch (err) {
-            setError("An error occurred. Is the backend running?");
+            setError(err instanceof Error ? err.message : "An error occurred.");
         }
     };
 
     return (
-        <div className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-[#0d3b66] text-[#faf0ca]">
+        <div className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-background text-foreground">
             {/* Dynamic Background */}
             <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute top-[-10%] left-[-10%] w-[40vw] h-[40vw] rounded-full bg-[#f4d35e]/10 blur-[100px] animate-pulse" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-[#ee964b]/10 blur-[100px] animate-pulse delay-700" />
+                <div className="absolute top-[-10%] left-[-10%] w-[40vw] h-[40vw] rounded-full bg-primary/10 blur-[100px] animate-pulse" />
+                <div className="absolute bottom-[-10%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-border/10 blur-[100px] animate-pulse delay-700" />
             </div>
 
             <div className="w-full max-w-md p-8 space-y-8 bg-black/40 backdrop-blur-xl rounded-3xl border border-white/10 shadow-2xl relative z-10">
@@ -72,7 +67,7 @@ export default function RegisterPage() {
                             type="text"
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
-                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#f4d35e]/50 focus:border-[#f4d35e] transition-all"
+                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
                             required
                         />
                     </div>
@@ -82,7 +77,7 @@ export default function RegisterPage() {
                             type="email"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
-                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#f4d35e]/50 focus:border-[#f4d35e] transition-all"
+                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
                         />
                     </div>
                     <div className="space-y-2">
@@ -91,14 +86,14 @@ export default function RegisterPage() {
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#f4d35e]/50 focus:border-[#f4d35e] transition-all"
+                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
                             required
                         />
                     </div>
 
                     <button
                         type="submit"
-                        className="w-full py-3.5 px-4 bg-gradient-to-r from-[#f4d35e] to-[#ee964b] text-[#0d3b66] font-bold rounded-xl hover:shadow-lg hover:shadow-[#f4d35e]/20 transition-all transform hover:scale-[1.02] active:scale-[0.98]"
+                        className="w-full py-3.5 px-4 bg-gradient-to-r from-primary to-border text-primary-foreground font-bold rounded-xl hover:shadow-lg hover:shadow-primary/20 transition-all transform hover:scale-[1.02] active:scale-[0.98]"
                     >
                         Create Account
                     </button>
@@ -106,7 +101,7 @@ export default function RegisterPage() {
 
                 <div className="text-center text-sm text-zinc-500">
                     Already have an account?{" "}
-                    <Link href="/login" className="text-[#f4d35e] hover:text-[#ee964b] font-medium hover:underline transition-colors">
+                    <Link href="/login" className="text-primary hover:text-border font-medium hover:underline transition-colors">
                         Login
                     </Link>
                 </div>

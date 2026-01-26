@@ -43,26 +43,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const fetchUser = async (authToken: string) => {
         try {
-            // Use internal API
-            const API_URL = "/api";
+            // Use Electron IPC
+            const { ipcRenderer } = (window as any).require('electron');
+            const userData = await ipcRenderer.invoke('auth-me', authToken);
 
-            const res = await fetch(`${API_URL}/auth/me`, {
-                headers: {
-                    Authorization: `Bearer ${authToken}`
-                }
-            });
-
-            if (res.ok) {
-                const userData = await res.json();
+            if (userData && !userData.error) {
                 setUser(userData);
             } else {
-                // Token invalid or expired
-                logout(false); // Don't redirect immediately if just checking on load, or do? 
-                // Actually if token is invalid, we should clear it.
+                logout(false);
             }
         } catch (err) {
             console.error("Failed to fetch user", err);
-            // On error considering them not logged in is safer
             logout(false);
         } finally {
             setIsLoading(false);
