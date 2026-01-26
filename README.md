@@ -2,7 +2,7 @@
 
 **DiZC** is a standalone, high-fidelity music experience designed for audiophiles who want to own their music. It bridges the gap between physical media (CDs) and the modern digital cloud.
 
-![DiZC UI](https://placehold.co/800x400?text=DiZC+App)
+![DiZC UI]([https://placehold.co/800x400?text=DiZC+App](https://ghost-audio.vercel.app/logo.png))
 
 ## Key Features
 
