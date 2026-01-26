@@ -19,8 +19,9 @@ function createWindow() {
     width: 1200,
     height: 800,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false, // For easier IPC in prototype
+      nodeIntegration: true, // Keeping enabled for now to avoid breaking other parts, but preload is preferred
+      contextIsolation: false, // Keeping false for now as we transition, but ideally should be true eventually
+      preload: path.join(__dirname, 'preload.js'),
     },
     icon: path.join(__dirname, '../build/icon.ico'),
   });
@@ -112,13 +113,16 @@ ipcMain.handle('auth-login', async (event, { username, password }) => {
 ipcMain.handle('auth-register', async (event, { username, password, email }) => {
   try {
     await dbConnect();
+    // Sanitize email: if empty string, set to null so sparse index works
+    const sanitizedEmail = email === "" ? null : email;
+
     const existingUser = await User.findOne({ username });
     if (existingUser) return { error: "User already exists" };
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    const user = await User.create({ username, password: hashedPassword, email });
+    const user = await User.create({ username, password: hashedPassword, email: sanitizedEmail });
     return { success: true, username: user.username };
   } catch (err) {
     console.error("Register IPC error:", err);
