@@ -1,26 +1,27 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const envPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env.local')
   : path.join(__dirname, '../.env.local');
 require('dotenv').config({ path: envPath });
 const { spawn } = require('child_process');
-const serve = require('electron-serve');
+// const serve = require('electron-serve'); // Removed
 const services = require('./services');
 
 let mainWindow;
 let backendProcess = null;
 
 const isDev = !app.isPackaged;
-const appServe = isDev ? null : serve({ directory: path.join(__dirname, '../out') });
+// const appServe = isDev ? null : serve({ directory: path.join(__dirname, '../out') }); // Removed
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     webPreferences: {
-      nodeIntegration: true, // Keeping enabled for now to avoid breaking other parts, but preload is preferred
-      contextIsolation: true, // Keeping false for now as we transition, but ideally should be true eventually
+      nodeIntegration: true,
+      contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
     icon: path.join(__dirname, '../build/icon.ico'),
@@ -30,27 +31,23 @@ function createWindow() {
     const startUrl = process.env.ELECTRON_START_URL || 'http://localhost:3000';
     mainWindow.loadURL(startUrl + '/app');
   } else {
-    // In production, serve the app via electron-serve
-    appServe(mainWindow).then(() => {
-      // Load the App Dashboard explicitly
-      mainWindow.loadURL('app://-/app.html');
+    // Load the App Dashboard
+    mainWindow.loadURL('app://-/app.html');
 
-      // Spawn Backend
-      const backendExe = path.join(process.resourcesPath, 'ghost_backend.exe');
-      console.log('Spawning backend from:', backendExe);
+    // Spawn Backend
+    const backendExe = path.join(process.resourcesPath, 'ghost_backend.exe');
+    console.log('Spawning backend from:', backendExe);
 
-      backendProcess = spawn(backendExe, [], {
-        stdio: 'ignore',
-        env: {
-          ...process.env,
-          // Inject Production DB Connection String
-          MONGODB_URI: process.env.MONGODB_URI
-        }
-      });
+    backendProcess = spawn(backendExe, [], {
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        MONGODB_URI: process.env.MONGODB_URI
+      }
+    });
 
-      backendProcess.on('error', (err) => {
-        console.error('Failed to start backend:', err);
-      });
+    backendProcess.on('error', (err) => {
+      console.error('Failed to start backend:', err);
     });
   }
 
@@ -58,6 +55,61 @@ function createWindow() {
     mainWindow = null;
   });
 }
+
+// Custom Protocol Handler for Production
+if (!isDev) {
+  protocol.registerSchemesAsPrivileged([
+    { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true } }
+  ]);
+}
+
+app.on('ready', () => {
+  if (!isDev) {
+    protocol.handle('app', (request) => {
+      const u = new URL(request.url);
+      let reqPath = decodeURIComponent(u.pathname);
+
+      // 1. Handle RSC Special Cases (Next.js App Router mismatches)
+      if (reqPath.includes('__next') && reqPath.endsWith('.txt')) {
+        const parts = reqPath.split('/');
+        const segment = parts[1]; // e.g. 'import' from /import/...
+        const potentialRSC = path.join(__dirname, '../out', `${segment}.txt`);
+        if (fs.existsSync(potentialRSC)) {
+          return net.fetch('file:///' + potentialRSC);
+        }
+      }
+
+      // 2. Standard Static File Serving with Extension Resolution
+      let filePath = path.join(__dirname, '../out', reqPath);
+
+      // Force / to /index.html
+      if (reqPath === '/' || reqPath === '') {
+        filePath = path.join(__dirname, '../out', 'index.html');
+      }
+
+      // Check if exact file exists
+      if (fs.existsSync(filePath) && fs.lstatSync(filePath).isFile()) {
+        return net.fetch('file:///' + filePath);
+      }
+
+      // Try appending .html (e.g. /library -> /library.html)
+      const htmlPath = filePath + '.html';
+      if (fs.existsSync(htmlPath)) {
+        return net.fetch('file:///' + htmlPath);
+      }
+
+      // Try appending /index.html
+      const indexPath = path.join(filePath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        return net.fetch('file:///' + indexPath);
+      }
+
+      console.error(`File not found: ${reqPath}`);
+      return net.fetch('file:///' + filePath);
+    });
+  }
+  createWindow();
+});
 
 // IPC Handlers
 ipcMain.handle('get-drives', async () => {
@@ -142,6 +194,25 @@ ipcMain.handle('auth-me', async (event, token) => {
     return { username: decoded.username, id: decoded.id };
   } catch (err) {
     return { error: "Invalid token" };
+  }
+});
+
+ipcMain.handle('dashboard-stats', async (event, token) => {
+  try {
+    // For now, return stats from the Mock Library to unblock UI
+    // TODO: Connect to real backend if possible or implement full local DB logic here
+    const totalAlbums = MOCK_LIBRARY.length;
+    const totalTracks = MOCK_LIBRARY.reduce((acc, alb) => acc + (alb.tracks ? alb.tracks.length : 0), 0);
+    const recentAlbums = MOCK_LIBRARY.slice(0, 5);
+
+    return {
+      total_albums: totalAlbums,
+      total_tracks: totalTracks,
+      recent_albums: recentAlbums
+    };
+  } catch (err) {
+    console.error("Dashboard Stats Error:", err);
+    return { total_albums: 0, total_tracks: 0, recent_albums: [] };
   }
 });
 

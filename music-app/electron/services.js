@@ -76,13 +76,14 @@ const Services = {
             }
         };
 
-        let drives = await getDrivesFromWmic();
+        // on Windows 11, WMIC is deprecated/missing. Try PowerShell first.
+        let drives = await getDrivesFromPowershell();
 
         if (!drives || drives.length === 0) {
-            // WMIC failed or found nothing (sometimes WMIC finds nothing but PS does)
-            const psDrives = await getDrivesFromPowershell();
-            if (psDrives && psDrives.length > 0) {
-                drives = psDrives;
+            // Fallback to WMIC if PowerShell yields nothing (unlikely but safe)
+            const wmicDrives = await getDrivesFromWmic();
+            if (wmicDrives && wmicDrives.length > 0) {
+                drives = wmicDrives;
             }
         }
 

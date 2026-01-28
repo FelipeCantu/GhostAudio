@@ -16,16 +16,42 @@ class CDRipper:
         # Check for ffmpeg
         self.ffmpeg = shutil.which('ffmpeg')
         
+        # Debug Logging for Ffmpeg
+        log_path = Path(os.path.expanduser('~')) / 'ghost_app_debug.log'
+        with open(log_path, 'a') as f:
+            f.write(f"\n[{datetime.now()}] Initializing CDRipper\n")
+            f.write(f"Is Bundled: {getattr(sys, 'frozen', False)}\n")
+            if hasattr(sys, '_MEIPASS'):
+                 f.write(f"MEIPASS: {sys._MEIPASS}\n")
+
         # If not found in PATH, check if we are running in a PyInstaller bundle
         if not self.ffmpeg and hasattr(sys, '_MEIPASS'):
-            bundled_ffmpeg = Path(sys._MEIPASS) / 'ffmpeg.exe'
-            if bundled_ffmpeg.exists():
-                self.ffmpeg = str(bundled_ffmpeg)
-            else:
-                 # Check in a 'bin' subdirectory
-                bundled_ffmpeg_bin = Path(sys._MEIPASS) / 'bin' / 'ffmpeg.exe'
-                if bundled_ffmpeg_bin.exists():
-                     self.ffmpeg = str(bundled_ffmpeg_bin)
+            # PyInstaller one-file mode extracts to sys._MEIPASS
+            # We used --add-binary="bin/ffmpeg.exe;." so it should be at root of _MEIPASS
+            bundled_paths = [
+                Path(sys._MEIPASS) / 'ffmpeg.exe',
+                Path(sys._MEIPASS) / 'bin' / 'ffmpeg.exe',
+            ]
+            
+            for p in bundled_paths:
+                with open(log_path, 'a') as f: f.write(f"Checking {p} (exists: {p.exists()})\n")
+                if p.exists():
+                    self.ffmpeg = str(p)
+                    break
+        
+        # If still not found, check local bin (for dev mode) or CWD
+        if not self.ffmpeg:
+            local_paths = [
+                 Path(__file__).resolve().parent.parent / 'bin' / 'ffmpeg.exe',
+                 Path(os.getcwd()) / 'ffmpeg.exe',
+                 Path(os.getcwd()) / 'bin' / 'ffmpeg.exe'
+            ]
+            for p in local_paths:
+                if p.exists():
+                    self.ffmpeg = str(p)
+                    break
+
+        with open(log_path, 'a') as f: f.write(f"Final Ffmpeg Path: {self.ffmpeg}\n")
 
 
     def get_drives(self):

@@ -25,3 +25,8 @@ The CD Ripping Engine is now **fully bundled**.
 - Fixed dependency issues where Python libraries like `musicbrainzngs` were missing in the packaged app.
 - Improved persistence logic to ensure ripped tracks appear immediately in your library.
 
+
+### 🎧 New Player & Dashboard Experience
+- **Live Dashboard**: Your dashboard now reflects your actual library stats and most recent rips in real-time.
+- **Persistent Player**: Enjoy continuous playback as you navigate between the Library, Import, and Settings screens.
+- **Web vs. App**: The Desktop App now launches directly into your music application, while the website serves our new marketing experience.

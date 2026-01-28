@@ -2,3 +2,5 @@ music-app/dist/
 music-app/resources/
 backend/build/
 *.exe
+__pycache__/
+*.spec

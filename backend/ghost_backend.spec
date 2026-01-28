@@ -4,9 +4,9 @@
 a = Analysis(
     ['run_server.py'],
     pathex=[],
-    binaries=[],
-    datas=[('bin/*', 'bin')],
-    hiddenimports=['rest_framework', 'rest_framework_simplejwt', 'importer.apps', 'corsheaders', 'whitenoise', 'pymongo', 'musicbrainzngs', 'importer.cd_metadata'],
+    binaries=[('bin/ffmpeg.exe', '.')],
+    datas=[],
+    hiddenimports=['rest_framework', 'rest_framework_simplejwt', 'importer.apps', 'corsheaders', 'whitenoise', 'whitenoise.middleware', 'pymongo', 'musicbrainzngs', 'importer.cd_metadata'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

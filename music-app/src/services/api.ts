@@ -75,6 +75,9 @@ export const api = {
     },
     library: {
         getAlbums: async (token: string): Promise<Album[]> => {
+            if (isElectron()) {
+                return await (window as any).electronAPI.invoke('library-get', token);
+            }
             // Always use Cloud API for Library
             const res = await fetch(`${NEXT_API_URL}/api/library/`, {
                 headers: { 'Authorization': `Bearer ${token}` }
@@ -83,6 +86,9 @@ export const api = {
             return await res.json();
         },
         getDashboardStats: async (token: string): Promise<any> => {
+            if (isElectron()) {
+                return await (window as any).electronAPI.invoke('dashboard-stats', token);
+            }
             const res = await fetch(`${NEXT_API_URL}/api/dashboard/stats/`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
