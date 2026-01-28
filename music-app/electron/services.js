@@ -19,6 +19,16 @@ function runCommand(command) {
 
 const Services = {
     // Get list of CD/DVD drives on Windows
+    getSystemStatus: async () => {
+        try {
+            const response = await fetch('http://127.0.0.1:8000/api/system/check/');
+            if (!response.ok) return { ffmpeg_found: false, error: 'Backend unreachable' };
+            return await response.json();
+        } catch (e) {
+            return { ffmpeg_found: false, error: e.message };
+        }
+    },
+
     getDrives: async () => {
         if (process.platform !== 'win32') {
             return [];

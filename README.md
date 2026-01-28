@@ -1,5 +1,7 @@
 <div align="center">
   <img src="logo.png" alt="DiZC Logo" width="200" />
+  <br/>
+  <img src="https://img.shields.io/badge/Status-Beta-orange" alt="Beta Status" />
 </div>
 
 # DiZC - High Fidelity Digital Music Library
@@ -35,7 +37,7 @@ Built as a dual-architecture system:
 
 ## Installation
 
-1.  Download the latest installer (`DiZC Setup 0.1.0.exe`).
+1.  Download the latest installer (`DiZC Setup 0.2.0-beta.exe`).
 2.  Run the installer.
 3.  Login or Register.
 4.  Start importing your CDs!

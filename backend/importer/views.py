@@ -38,13 +38,49 @@ class AlbumViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         return Album.objects.filter(user=self.request.user)
 
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def dashboard_stats(request):
+    """
+    Get statistics for the user's library:
+    - Total Albums
+    - Total Tracks
+    - Recent Albums (top 5)
+    """
+    user = request.user
+    
+    # Counts
+    total_albums = Album.objects.filter(user=user).count()
+    total_tracks = Track.objects.filter(album__user=user).count()
+    
+    # Recent Activity
+    recent_albums_qs = Album.objects.filter(user=user).order_by('-created_at')[:5]
+    recent_albums = AlbumSerializer(recent_albums_qs, many=True).data
+    
+    return Response({
+        'total_albums': total_albums,
+        'total_tracks': total_tracks,
+        'recent_albums': recent_albums
+    })
+
 # --- CD Import Views ---
+
+@csrf_exempt
+def check_system(request):
+    """Check system capabilities like ffmpeg presence"""
+    ripper = CDRipper('music_library')
+    return JsonResponse({
+        'ffmpeg_found': bool(ripper.ffmpeg),
+        'ffmpeg_path': ripper.ffmpeg,
+        'platform': os.name
+    })
 
 def list_drives(request):
     # Public for now, or could require auth
     ripper = CDRipper('music_library')
     drives = ripper.get_drives()
     return JsonResponse({'drives': drives})
+
 
 @csrf_exempt
 def get_cd_metadata(request):

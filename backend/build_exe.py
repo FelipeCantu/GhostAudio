@@ -15,6 +15,8 @@ if __name__ == '__main__':
         '--hidden-import=corsheaders',
         '--hidden-import=whitenoise',
         '--hidden-import=pymongo',
+        '--hidden-import=musicbrainzngs',
+        '--hidden-import=importer.cd_metadata',
         # Add data files if needed (e.g., templates, though this is API only mostly)
         # '--add-data=templates;templates', 
     ])

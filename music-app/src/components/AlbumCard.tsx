@@ -5,12 +5,22 @@ import Image from "next/image";
 import { Disc, Play } from "lucide-react";
 import { Album } from "@/services/api";
 
+import { usePlayer } from "@/context/PlayerContext";
+
 interface AlbumCardProps {
     album: Album;
 }
 
 export default function AlbumCard({ album }: AlbumCardProps) {
     const [imgError, setImgError] = useState(false);
+    const { playTrack } = usePlayer();
+
+    const handlePlay = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (album.tracks && album.tracks.length > 0) {
+            playTrack(album.tracks[0], album.tracks);
+        }
+    };
 
     return (
         <div className="group relative bg-card border border-white/5 rounded-2xl p-4 hover:bg-white/10 transition-colors cursor-pointer">
@@ -32,7 +42,10 @@ export default function AlbumCard({ album }: AlbumCardProps) {
 
                 {/* Play Overlay */}
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <button className="w-12 h-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-transform">
+                    <button
+                        onClick={handlePlay}
+                        className="w-12 h-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-transform"
+                    >
                         <Play size={24} fill="currentColor" />
                     </button>
                 </div>

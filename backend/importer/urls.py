@@ -17,9 +17,13 @@ urlpatterns = [
     path('auth/me/', views.UserDetailView.as_view(), name='user_detail'),
 
     # CD Ripping (Legacy & Authenticated)
+    path('system/check/', views.check_system, name='check_system'),
     path('drives/', views.list_drives, name='list_drives'),
     path('metadata/', views.get_cd_metadata, name='get_cd_metadata'),
     path('rip/', views.rip_cd, name='rip_cd'),
+
+    # Dashboard API
+    path('dashboard/stats/', views.dashboard_stats, name='dashboard_stats'),
 
     # Library API
     path('', include(router.urls)),

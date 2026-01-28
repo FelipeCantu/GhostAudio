@@ -28,11 +28,12 @@ function createWindow() {
 
   if (isDev) {
     const startUrl = process.env.ELECTRON_START_URL || 'http://localhost:3000';
-    mainWindow.loadURL(startUrl);
+    mainWindow.loadURL(startUrl + '/app');
   } else {
     // In production, serve the app via electron-serve
     appServe(mainWindow).then(() => {
-      mainWindow.loadURL('app://-');
+      // Load the App Dashboard explicitly
+      mainWindow.loadURL('app://-/app.html');
 
       // Spawn Backend
       const backendExe = path.join(process.resourcesPath, 'ghost_backend.exe');
@@ -61,6 +62,10 @@ function createWindow() {
 // IPC Handlers
 ipcMain.handle('get-drives', async () => {
   return { drives: await services.getDrives() };
+});
+
+ipcMain.handle('system-status', async () => {
+  return await services.getSystemStatus();
 });
 
 ipcMain.handle('rip-cd', async (event, args) => {

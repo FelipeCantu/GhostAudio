@@ -38,7 +38,10 @@ interface AuthResponse {
 export const api = {
     auth: {
         login: async (credentials: any): Promise<AuthResponse> => {
-            // Always use Cloud API for Auth
+            if (isElectron()) {
+                return await (window as any).electronAPI.invoke('auth-login', credentials);
+            }
+            // Fallback to Cloud API
             const res = await fetch(`${NEXT_API_URL}/api/auth/login/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -47,7 +50,10 @@ export const api = {
             return await res.json();
         },
         register: async (data: any): Promise<AuthResponse> => {
-            // Always use Cloud API for Auth
+            if (isElectron()) {
+                return await (window as any).electronAPI.invoke('auth-register', data);
+            }
+            // Fallback to Cloud API
             const res = await fetch(`${NEXT_API_URL}/api/auth/register/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -56,7 +62,10 @@ export const api = {
             return await res.json();
         },
         me: async (token: string): Promise<any> => {
-            // Always use Cloud API for Auth
+            if (isElectron()) {
+                return await (window as any).electronAPI.invoke('auth-me', token);
+            }
+            // Fallback to Cloud API
             const res = await fetch(`${NEXT_API_URL}/api/auth/me/`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -72,6 +81,13 @@ export const api = {
             });
             if (!res.ok) throw new Error("Failed to fetch library");
             return await res.json();
+        },
+        getDashboardStats: async (token: string): Promise<any> => {
+            const res = await fetch(`${NEXT_API_URL}/api/dashboard/stats/`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) throw new Error("Failed to fetch dashboard stats");
+            return await res.json();
         }
     },
     system: {
@@ -80,6 +96,13 @@ export const api = {
                 return await (window as any).electronAPI.invoke('get-drives');
             }
             throw new Error("CD Import is only available in the Desktop App.");
+        },
+        getSystemStatus: async () => {
+            if (isElectron()) {
+                return await (window as any).electronAPI.invoke('system-status');
+            }
+            // Mock for web
+            return { ffmpeg_found: false, platform: 'web' };
         },
         ripCd: async (data: any) => {
             if (isElectron()) {

@@ -17,7 +17,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     const pathname = usePathname();
 
     const links = [
-        { name: "Home", href: "/", icon: Home },
+        { name: "Home", href: "/app", icon: Home },
         { name: "My Library", href: "/library", icon: Library },
         { name: "Import CD", href: "/import", icon: Disc },
         { name: "Settings", href: "/settings", icon: SettingsIcon },

@@ -3,6 +3,7 @@ import subprocess
 import shutil
 import logging
 from pathlib import Path
+import sys
 
 from . import cd_metadata
 
@@ -14,6 +15,18 @@ class CDRipper:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         # Check for ffmpeg
         self.ffmpeg = shutil.which('ffmpeg')
+        
+        # If not found in PATH, check if we are running in a PyInstaller bundle
+        if not self.ffmpeg and hasattr(sys, '_MEIPASS'):
+            bundled_ffmpeg = Path(sys._MEIPASS) / 'ffmpeg.exe'
+            if bundled_ffmpeg.exists():
+                self.ffmpeg = str(bundled_ffmpeg)
+            else:
+                 # Check in a 'bin' subdirectory
+                bundled_ffmpeg_bin = Path(sys._MEIPASS) / 'bin' / 'ffmpeg.exe'
+                if bundled_ffmpeg_bin.exists():
+                     self.ffmpeg = str(bundled_ffmpeg_bin)
+
 
     def get_drives(self):
         """List available CD/DVD drives (Windows specific)"""

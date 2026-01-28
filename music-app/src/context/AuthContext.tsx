@@ -67,7 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // For simplicity, let's just push to home. 
         // But better to fetch user first.
         fetchUser(accessToken).then(() => {
-            router.push("/");
+            router.push("/app");
         });
     };
 

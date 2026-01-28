@@ -1,6 +1,6 @@
 {
   "name": "dizc",
-  "version": "0.1.0",
+  "version": "0.2.0-beta",
   "description": "DiZC - High Fidelity Digital Music Library. Standalone, Cloud-Synced, Bit-Perfect.",
   "private": true,
   "main": "electron/main.js",
