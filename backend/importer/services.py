@@ -4,6 +4,7 @@ import shutil
 import logging
 from pathlib import Path
 import sys
+from datetime import datetime
 
 from . import cd_metadata
 
@@ -41,10 +42,11 @@ class CDRipper:
         
         # If still not found, check local bin (for dev mode) or CWD
         if not self.ffmpeg:
+            bin_name = 'ffmpeg.exe' if os.name == 'nt' else 'ffmpeg'
             local_paths = [
-                 Path(__file__).resolve().parent.parent / 'bin' / 'ffmpeg.exe',
-                 Path(os.getcwd()) / 'ffmpeg.exe',
-                 Path(os.getcwd()) / 'bin' / 'ffmpeg.exe'
+                 Path(__file__).resolve().parent.parent / 'bin' / bin_name,
+                 Path(os.getcwd()) / bin_name,
+                 Path(os.getcwd()) / 'bin' / bin_name
             ]
             for p in local_paths:
                 if p.exists():
