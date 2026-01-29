@@ -107,7 +107,7 @@ def get_library_path():
     return path
 
 @api_view(['POST'])
-@permission_classes([permissions.AllowAny]) 
+@permission_classes([permissions.IsAuthenticated]) 
 def rip_cd(request):
     data = request.data
     drive = data.get('drive_path')
@@ -116,6 +116,7 @@ def rip_cd(request):
     mongo_user_id = data.get('mongo_user_id') # New required field for bridge
 
     ripper = CDRipper(get_library_path())
+    logger.info(f"Rip Request User: {request.user}, Is Authenticated: {request.user.is_authenticated}")
     try:
         # 1. Perform the rip (Physical/File Operation)
         tracks_paths = ripper.rip_cd(drive, metadata=metadata)
@@ -137,8 +138,6 @@ def rip_cd(request):
                 safe_metadata = metadata or {}
                 artist_name = safe_metadata.get('artist', 'Unknown Artist')
                 album_title = safe_metadata.get('album', 'Unknown Album')
-                # Assume cover art is handled separately or we add a placeholder path
-                # For now, we focus on the data structure
 
                 # Construct Tracks
                 mongo_tracks = []
@@ -158,10 +157,6 @@ def rip_cd(request):
                             m, s = divmod(seconds, 60)
                             duration_str = f"{m:02d}:{s:02d}"
 
-                    # Convert absolute path to relative or accessible path?
-                    # For local bridge, we might need the absolute path.
-                    # Or we serve it via Django static/media.
-                    # let's store the absolute path for Electron to read.
                     mongo_tracks.append({
                         'title': track_title,
                         'trackNumber': track_num,
@@ -173,7 +168,7 @@ def rip_cd(request):
                     'user': ObjectId(mongo_user_id),
                     'title': album_title,
                     'artist': artist_name,
-                    'coverArt': '', # TODO: Implement cover art upload/link
+                    'coverArt': '',
                     'tracks': mongo_tracks,
                     'createdAt': datetime.now()
                 }
@@ -183,20 +178,16 @@ def rip_cd(request):
 
             except Exception as e:
                 logger.error(f"MongoDB Bridge Failed: {e}")
-                # We don't fail the whole request, but we should warn
-                return Response({'status': 'completed_with_errors', 'message': f'Ripped but failed to save to MongoDB: {str(e)}', 'tracks': tracks_paths})
+                pass
 
         # 3. Save to Django SQLite (Legacy/Backup)
-        # We keep this for now so we don't break existing Django Admin views if they are used
         if request.user.is_authenticated:
             safe_metadata = metadata or {}
-            artist_name = safe_metadata.get('artist', 'Unknown Artist')
-            album_title = safe_metadata.get('album', 'Unknown Album')
             
             album = Album.objects.create(
                 user=request.user,
-                title=album_title,
-                artist=artist_name,
+                title=safe_metadata.get('album', 'Unknown Album'),
+                artist=safe_metadata.get('artist', 'Unknown Artist'),
             )
             
             for idx, path in enumerate(tracks_paths):
