@@ -225,10 +225,12 @@ def get_release_info(drive_letter):
                     for trk in medium['track-list']:
                         track_name = trk['recording']['title']
                         track_num = trk['number']
+                        duration_ms = trk.get('length') # integer milliseconds
                         tracks.append({
                             'track_number': track_num,
                             'title': track_name,
-                            'artist': artist # Can be per track
+                            'artist': artist,
+                            'duration_ms': duration_ms
                         })
                 
                 return {

@@ -4,6 +4,7 @@ import shutil
 import logging
 from pathlib import Path
 import sys
+from datetime import datetime
 
 from . import cd_metadata
 
@@ -11,18 +12,27 @@ logger = logging.getLogger(__name__)
 
 class CDRipper:
     def __init__(self, output_dir):
-        self.output_dir = Path(output_dir)
+        self.output_dir = Path(output_dir).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         # Check for ffmpeg
         self.ffmpeg = shutil.which('ffmpeg')
         
-        # Debug Logging for Ffmpeg
-        log_path = Path(os.path.expanduser('~')) / 'ghost_app_debug.log'
-        with open(log_path, 'a') as f:
-            f.write(f"\n[{datetime.now()}] Initializing CDRipper\n")
-            f.write(f"Is Bundled: {getattr(sys, 'frozen', False)}\n")
-            if hasattr(sys, '_MEIPASS'):
-                 f.write(f"MEIPASS: {sys._MEIPASS}\n")
+        self.debug_log = []
+        
+        def log_debug(msg):
+            print(msg)  # Print to console for immediate visibility
+            self.debug_log.append(msg)
+            try:
+                log_path = Path(os.path.expanduser('~')) / 'ghost_app_debug.log'
+                with open(log_path, 'a') as f:
+                    f.write(f"{msg}\n")
+            except Exception:
+                pass
+
+        log_debug(f"\n[{datetime.now()}] Initializing CDRipper")
+        log_debug(f"Is Bundled: {getattr(sys, 'frozen', False)}")
+        if hasattr(sys, '_MEIPASS'):
+             log_debug(f"MEIPASS: {sys._MEIPASS}")
 
         # If not found in PATH, check if we are running in a PyInstaller bundle
         if not self.ffmpeg and hasattr(sys, '_MEIPASS'):
@@ -34,7 +44,7 @@ class CDRipper:
             ]
             
             for p in bundled_paths:
-                with open(log_path, 'a') as f: f.write(f"Checking {p} (exists: {p.exists()})\n")
+                log_debug(f"Checking {p} (exists: {p.exists()})")
                 if p.exists():
                     self.ffmpeg = str(p)
                     break
@@ -47,11 +57,13 @@ class CDRipper:
                  Path(os.getcwd()) / 'bin' / 'ffmpeg.exe'
             ]
             for p in local_paths:
-                if p.exists():
+                exists = p.exists() if p else False
+                log_debug(f"Checking local {p} (exists: {exists})")
+                if exists:
                     self.ffmpeg = str(p)
                     break
 
-        with open(log_path, 'a') as f: f.write(f"Final Ffmpeg Path: {self.ffmpeg}\n")
+        log_debug(f"Final Ffmpeg Path: {self.ffmpeg}")
 
 
     def get_drives(self):

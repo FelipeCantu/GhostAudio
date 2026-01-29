@@ -115,6 +115,13 @@ export const api = {
                 return await (window as any).electronAPI.invoke('rip-cd', data);
             }
             throw new Error("CD Import is only available in the Desktop App.");
+        },
+        getCdMetadata: async (drivePath: string) => {
+            if (isElectron()) {
+                return await (window as any).electronAPI.invoke('get-cd-metadata', { drive_path: drivePath });
+            }
+            // Mock or error for web
+            return { error: "Metadata lookup only available in Destkop App" };
         }
     },
     isElectron

@@ -199,66 +199,19 @@ ipcMain.handle('auth-me', async (event, token) => {
 
 ipcMain.handle('dashboard-stats', async (event, token) => {
   try {
-    // For now, return stats from the Mock Library to unblock UI
-    // TODO: Connect to real backend if possible or implement full local DB logic here
-    const totalAlbums = MOCK_LIBRARY.length;
-    const totalTracks = MOCK_LIBRARY.reduce((acc, alb) => acc + (alb.tracks ? alb.tracks.length : 0), 0);
-    const recentAlbums = MOCK_LIBRARY.slice(0, 5);
-
-    return {
-      total_albums: totalAlbums,
-      total_tracks: totalTracks,
-      recent_albums: recentAlbums
-    };
+    return await services.getDashboardStats(token);
   } catch (err) {
     console.error("Dashboard Stats Error:", err);
     return { total_albums: 0, total_tracks: 0, recent_albums: [] };
   }
 });
 
-// Library IPC Handlers
-// Simple in-memory store for demo purposes (matching previous API behavior)
-const MOCK_LIBRARY = [
-  {
-    id: 1,
-    title: "Simulation Theory",
-    artist: "Muse",
-    created_at: new Date().toISOString(),
-    cover_art: "https://coverartarchive.org/release/8e0467fb-2374-4299-b9d2-32aa878c772e/front",
-    tracks: [
-      { id: 1, track_number: 1, title: "Algorithm", audio_file: "", duration: "4:05" },
-      { id: 2, track_number: 2, title: "The Dark Side", audio_file: "", duration: "3:47" }
-    ]
-  }
-];
-
 ipcMain.handle('library-get', async (event, token) => {
-  try {
-    if (!token) throw new Error("Unauthorized");
-    // Verify token if needed, but for now just return mock
-    return MOCK_LIBRARY;
-  } catch (err) {
-    return { error: err.message };
-  }
+  return await services.getLibrary(token);
 });
 
-ipcMain.handle('library-add', async (event, { token, album }) => {
-  try {
-    if (!token) throw new Error("Unauthorized");
-    const newAlbum = {
-      id: MOCK_LIBRARY.length + 1,
-      title: album.title || "Unknown Album",
-      artist: album.artist || "Unknown Artist",
-      created_at: new Date().toISOString(),
-      cover_art: album.cover_art,
-      tracks: album.tracks || []
-    };
-    MOCK_LIBRARY.push(newAlbum);
-    return newAlbum;
-  } catch (err) {
-    return { error: err.message };
-  }
-});
+// Library add removed - handled by Rip CD process
+
 
 app.on('ready', () => {
   createWindow();

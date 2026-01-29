@@ -108,9 +108,11 @@ const Services = {
 
     // Rip CD - Proxies to Django Backend
     ripCD: async (args, eventSender) => {
-        // args contains { drive_path, mongo_user_id, token }
-        const drivePath = args.drive_path || args; // Handle both object and string for backward compat
+        // args contains { drive_path, mongo_user_id, token, metadata }
+        const drivePath = args.drive_path;
         const mongoUserId = args.mongo_user_id;
+        const token = args.token;
+        const metadata = args.metadata;
 
         console.log(`[Electron] Requesting Rip for drive: ${drivePath}, User: ${mongoUserId}`);
 
@@ -120,11 +122,12 @@ const Services = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({
                     drive_path: drivePath,
                     mongo_user_id: mongoUserId,
-                    // metadata: {} // Let backend fetch metadata
+                    metadata: metadata
                 })
             });
 
@@ -138,7 +141,36 @@ const Services = {
 
         } catch (e) {
             console.error("[Electron] Rip Proxy Failed:", e);
-            // Fallback? No, we want to rely on the backend.
+            throw e;
+        }
+    },
+
+    getLibrary: async (token) => {
+        try {
+            const response = await fetch('http://127.0.0.1:8000/api/library/', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            if (!response.ok) throw new Error('Failed to fetch library');
+            return await response.json();
+        } catch (e) {
+            console.error("[Electron] Library Fetch Failed:", e);
+            throw e;
+        }
+    },
+
+    getDashboardStats: async (token) => {
+        try {
+            const response = await fetch('http://127.0.0.1:8000/api/dashboard/stats/', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            if (!response.ok) throw new Error('Failed to fetch stats');
+            return await response.json();
+        } catch (e) {
+            console.error("[Electron] Stats Fetch Failed:", e);
             throw e;
         }
     }

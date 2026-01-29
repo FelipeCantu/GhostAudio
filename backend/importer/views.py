@@ -6,7 +6,7 @@ from rest_framework.decorators import api_view, permission_classes
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from bson.objectid import ObjectId
 from pymongo import MongoClient
 from django.conf import settings
@@ -72,7 +72,8 @@ def check_system(request):
     return JsonResponse({
         'ffmpeg_found': bool(ripper.ffmpeg),
         'ffmpeg_path': ripper.ffmpeg,
-        'platform': os.name
+        'platform': os.name,
+        'debug_log': ripper.debug_log
     })
 
 def list_drives(request):
@@ -97,6 +98,14 @@ def get_cd_metadata(request):
             return JsonResponse({'error': str(e)}, status=500)
     return JsonResponse({'error': 'Invalid method'}, status=405)
 
+# Helper for consistent path
+def get_library_path():
+    # Use User's Music Directory for persistence
+    # e.g. C:\Users\Username\Music\GhostAudio Library
+    home = os.path.expanduser("~")
+    path = os.path.join(home, "Music", "GhostAudio Library")
+    return path
+
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny]) 
 def rip_cd(request):
@@ -106,7 +115,7 @@ def rip_cd(request):
     nosave = data.get('nosave', False)
     mongo_user_id = data.get('mongo_user_id') # New required field for bridge
 
-    ripper = CDRipper('music_library')
+    ripper = CDRipper(get_library_path())
     try:
         # 1. Perform the rip (Physical/File Operation)
         tracks_paths = ripper.rip_cd(drive, metadata=metadata)
@@ -125,8 +134,9 @@ def rip_cd(request):
                 db = client.get_database() # Uses database from URI
                 albums_collection = db['albums']
                 
-                artist_name = metadata.get('artist', 'Unknown Artist')
-                album_title = metadata.get('album', 'Unknown Album')
+                safe_metadata = metadata or {}
+                artist_name = safe_metadata.get('artist', 'Unknown Artist')
+                album_title = safe_metadata.get('album', 'Unknown Album')
                 # Assume cover art is handled separately or we add a placeholder path
                 # For now, we focus on the data structure
 
@@ -135,9 +145,19 @@ def rip_cd(request):
                 for idx, path in enumerate(tracks_paths):
                     track_num = idx + 1
                     track_title = f"Track {track_num}"
-                    if metadata and 'tracks' in metadata and idx < len(metadata['tracks']):
-                        track_title = metadata['tracks'][idx].get('title', track_title)
+                    duration_ms = 0
+                    duration_str = "00:00"
                     
+                    if metadata and 'tracks' in metadata and idx < len(metadata['tracks']):
+                        track_info = metadata['tracks'][idx]
+                        track_title = track_info.get('title', track_title)
+                        duration_ms = track_info.get('duration_ms', 0)
+                        if duration_ms:
+                            # Format MM:SS
+                            seconds = int(duration_ms) // 1000
+                            m, s = divmod(seconds, 60)
+                            duration_str = f"{m:02d}:{s:02d}"
+
                     # Convert absolute path to relative or accessible path?
                     # For local bridge, we might need the absolute path.
                     # Or we serve it via Django static/media.
@@ -146,7 +166,7 @@ def rip_cd(request):
                         'title': track_title,
                         'trackNumber': track_num,
                         'audioFile': str(path),
-                        'duration': 0 # Placeholder, would need mutagen to get real duration
+                        'duration': duration_str 
                     })
 
                 new_album = {
@@ -169,8 +189,9 @@ def rip_cd(request):
         # 3. Save to Django SQLite (Legacy/Backup)
         # We keep this for now so we don't break existing Django Admin views if they are used
         if request.user.is_authenticated:
-            artist_name = metadata.get('artist', 'Unknown Artist')
-            album_title = metadata.get('album', 'Unknown Album')
+            safe_metadata = metadata or {}
+            artist_name = safe_metadata.get('artist', 'Unknown Artist')
+            album_title = safe_metadata.get('album', 'Unknown Album')
             
             album = Album.objects.create(
                 user=request.user,
@@ -181,14 +202,20 @@ def rip_cd(request):
             for idx, path in enumerate(tracks_paths):
                 track_num = idx + 1
                 track_title = f"Track {track_num}"
+                duration_val = None
                 if metadata and 'tracks' in metadata and idx < len(metadata['tracks']):
-                    track_title = metadata['tracks'][idx].get('title', track_title)
+                    track_info = metadata['tracks'][idx]
+                    track_title = track_info.get('title', track_title)
+                    d_ms = track_info.get('duration_ms', 0)
+                    if d_ms:
+                        duration_val = timedelta(milliseconds=int(d_ms))
                 
                 Track.objects.create(
                     album=album,
                     title=track_title,
                     track_number=track_num,
-                    audio_file=str(path)
+                    audio_file=str(path),
+                    duration=duration_val
                 )
 
         return Response({'status': 'completed', 'message': 'Ripped and bridged to MongoDB'})

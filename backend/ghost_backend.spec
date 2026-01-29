@@ -2,9 +2,9 @@
 
 
 a = Analysis(
-    ['run_server.py'],
+    ['C:\\Users\\Felipe\\Documents\\projects\\GhostRepo\\backend\\run_server.py'],
     pathex=[],
-    binaries=[('bin/ffmpeg.exe', '.')],
+    binaries=[('C:\\Users\\Felipe\\Documents\\projects\\GhostRepo\\backend\\bin\\ffmpeg.exe', '.')],
     datas=[],
     hiddenimports=['rest_framework', 'rest_framework_simplejwt', 'importer.apps', 'corsheaders', 'whitenoise', 'whitenoise.middleware', 'pymongo', 'musicbrainzngs', 'importer.cd_metadata'],
     hookspath=[],

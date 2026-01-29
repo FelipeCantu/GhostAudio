@@ -20,11 +20,23 @@ export default function CDImporter() {
     const [message, setMessage] = useState("");
     const [ffmpegMissing, setFfmpegMissing] = useState(false);
 
+    // Check if we are in Electron environment
+    const [isDesktop, setIsDesktop] = useState(false);
+
+    useEffect(() => {
+        setIsDesktop(api.isElectron());
+    }, []);
+
+    const [metadata, setMetadata] = useState<any>(null);
+
     const checkSystem = async () => {
         try {
             const sys = await api.system.getSystemStatus();
+            console.log("System Status Object:", sys); // Log full object to see Connection Errors
             if (!sys.ffmpeg_found) {
                 setFfmpegMissing(true);
+            } else {
+                setFfmpegMissing(false);
             }
         } catch (e) {
             console.warn("Failed to check system status", e);
@@ -34,6 +46,7 @@ export default function CDImporter() {
     const scanDrives = async () => {
         setStatus("scanning");
         setMessage("Scanning for devices...");
+        setMetadata(null);
 
         try {
             const data = await api.system.getDrives();
@@ -57,6 +70,32 @@ export default function CDImporter() {
         checkSystem();
     }, []);
 
+    useEffect(() => {
+        if (selectedDrive) {
+            fetchMetadata(selectedDrive);
+        } else {
+            setMetadata(null);
+        }
+    }, [selectedDrive]);
+
+    const fetchMetadata = async (drive: string) => {
+        setMessage("Reading Disc...");
+        try {
+            const meta = await api.system.getCdMetadata(drive);
+            if (meta && !meta.error) {
+                setMetadata(meta);
+                setMessage(`Ready to import: ${meta.album} by ${meta.artist}`);
+            } else {
+                setMetadata(null);
+                setMessage("Audio CD detected. No metadata found.");
+            }
+        } catch (e) {
+            console.warn("Metadata fetch failed", e);
+            setMetadata(null);
+            setMessage("Audio CD detected. Metadata lookup failed.");
+        }
+    };
+
 
     const startRip = async () => {
         if (!selectedDrive) return;
@@ -66,18 +105,19 @@ export default function CDImporter() {
             const data = await api.system.ripCd({
                 drive_path: selectedDrive,
                 token,
-                mongo_user_id: user?.id
+                mongo_user_id: user?.id,
+                metadata: metadata // Pass fetched metadata
             });
 
             if (data.status === "started" || data.status === "completed") {
-                setMessage("Importing tracks...");
+                setMessage("Import completed. Finalizing library...");
                 // If it returns completed immediately (simulated), we still show success
                 // If it returns started, we wait (or the service handles it)
                 // For now, let's keep the timeout as a UI feedback loop if the backend is async
                 setTimeout(() => {
                     setStatus("completed");
                     setMessage("Import completed successfully.");
-                }, 5000);
+                }, 2000);
             } else {
                 throw new Error("Import failed");
             }
@@ -92,6 +132,32 @@ export default function CDImporter() {
         visible: { opacity: 1, y: 0, transition: { duration: 0.5 } }
     };
 
+    if (!isDesktop) {
+        return (
+            <motion.div
+                variants={containerVariants}
+                initial="hidden"
+                animate="visible"
+                className="w-full max-w-md mx-auto"
+            >
+                <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-black/40 backdrop-blur-xl shadow-2xl ring-1 ring-white/5 p-8 text-center space-y-4">
+                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-zinc-800/50 text-zinc-400">
+                        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 className="text-xl font-bold text-white">Desktop Application Feature</h3>
+                        <p className="text-zinc-400 text-sm mt-2">
+                            CD Importing is only available in the GhostAudio Desktop application.
+                            Please download the desktop app to access high-fidelity CD ripping and library management.
+                        </p>
+                    </div>
+                </div>
+            </motion.div>
+        );
+    }
+
     return (
         <motion.div
             variants={containerVariants}
@@ -105,10 +171,14 @@ export default function CDImporter() {
                 <div className="relative p-8 space-y-8">
                     {/* Header */}
                     <div className="flex items-center gap-5">
-                        <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-border shadow-lg shadow-primary/20">
-                            <svg className="w-7 h-7 text-primary-foreground drop-shadow-sm" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                            </svg>
+                        <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-border shadow-lg shadow-primary/20 overflow-hidden">
+                            {metadata?.cover_art ? (
+                                <img src={metadata.cover_art} alt="Cover" className="h-full w-full object-cover" />
+                            ) : (
+                                <svg className="w-7 h-7 text-primary-foreground drop-shadow-sm" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                                </svg>
+                            )}
                         </div>
                         <div>
                             <h2 className="text-2xl font-bold text-white tracking-tight">CD Importer</h2>
@@ -156,19 +226,55 @@ export default function CDImporter() {
                                     </span>
                                 </motion.div>
                             ) : (
-                                <div className="relative group">
-                                    <select
-                                        value={selectedDrive || ""}
-                                        onChange={(e) => setSelectedDrive(e.target.value)}
-                                        className="w-full appearance-none bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 rounded-xl px-4 py-3.5 pr-10 text-zinc-200 focus:outline-none focus:ring-2 focus:ring-border/30 transition-all font-medium"
-                                    >
-                                        {drives.map((drive) => (
-                                            <option key={drive} value={drive}>{drive} - Audio CD</option>
-                                        ))}
-                                    </select>
-                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500 group-hover:text-zinc-300 transition-colors">
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" /></svg>
+                                <div className="space-y-4">
+                                    <div className="relative group">
+                                        <select
+                                            value={selectedDrive || ""}
+                                            onChange={(e) => setSelectedDrive(e.target.value)}
+                                            className="w-full appearance-none bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 rounded-xl px-4 py-3.5 pr-10 text-zinc-200 focus:outline-none focus:ring-2 focus:ring-border/30 transition-all font-medium"
+                                        >
+                                            {drives.map((drive) => (
+                                                <option key={drive} value={drive}>{drive} - Audio CD</option>
+                                            ))}
+                                        </select>
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500 group-hover:text-zinc-300 transition-colors">
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" /></svg>
+                                        </div>
                                     </div>
+
+                                    {/* Album Preview Card */}
+                                    {metadata && (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            className="rounded-xl bg-zinc-900/40 border border-zinc-800 p-4"
+                                        >
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <h3 className="font-bold text-white text-lg leading-tight">{metadata.album}</h3>
+                                                    <p className="text-zinc-400 text-sm">{metadata.artist}</p>
+                                                </div>
+                                                <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-md">
+                                                    {metadata.tracks?.length || '?'} Tracks
+                                                </span>
+                                            </div>
+
+                                            <div className="max-h-32 overflow-y-auto pr-1 space-y-1 custom-scrollbar">
+                                                {metadata.tracks?.map((track: any) => (
+                                                    <div key={track.track_number} className="flex items-center text-xs text-zinc-500 py-1 border-b border-zinc-800/50 last:border-0">
+                                                        <span className="w-6 text-zinc-600 font-mono">{track.track_number}.</span>
+                                                        <span className="truncate flex-1">{track.title}</span>
+                                                        {track.duration_ms && (
+                                                            <span className="w-10 text-right font-mono text-zinc-600">
+                                                                {Math.floor(track.duration_ms / 60000)}:
+                                                                {String(Math.floor((track.duration_ms % 60000) / 1000)).padStart(2, '0')}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </motion.div>
+                                    )}
                                 </div>
                             )}
                         </div>
