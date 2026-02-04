@@ -6,15 +6,19 @@ import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function PlayerBar() {
-    const { currentTrack, isPlaying, togglePlay, nextTrack, prevTrack, progress, duration, seek } = usePlayer();
+    const { currentTrack, currentAlbum, isPlaying, togglePlay, nextTrack, prevTrack, progress, duration, seek } = usePlayer();
 
     if (!currentTrack) return null;
 
     const formatTime = (seconds: number) => {
+        if (!seconds || !isFinite(seconds) || isNaN(seconds)) return "0:00";
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
+
+    // Get track duration from metadata if audio duration not available
+    const displayDuration = duration && isFinite(duration) ? duration : 0;
 
     return (
         <AnimatePresence>
@@ -27,16 +31,23 @@ export default function PlayerBar() {
                 {/* Track Info */}
                 <div className="flex items-center gap-4 w-1/4">
                     <div className="relative w-14 h-14 rounded-lg overflow-hidden bg-black/50 border border-white/5 flex-shrink-0">
-                        {/* We don't have album art in Track interface yet easily, assuming it might be available or generic */}
-                        {/* For now, generic or try to fetch if we update Track interface later */}
-                        <div className="w-full h-full flex items-center justify-center">
-                            <Disc size={24} className={`text-zinc-500 ${isPlaying ? 'animate-[spin_4s_linear_infinite]' : ''}`} />
-                        </div>
+                        {currentAlbum?.coverArt ? (
+                            <img
+                                src={currentAlbum.coverArt}
+                                alt={currentAlbum.title}
+                                className="w-full h-full object-cover"
+                            />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900">
+                                <Disc size={24} className={`text-zinc-500 ${isPlaying ? 'animate-[spin_4s_linear_infinite]' : ''}`} />
+                            </div>
+                        )}
                     </div>
                     <div className="min-w-0">
                         <h4 className="font-bold text-white truncate">{currentTrack.title}</h4>
-                        {/* We need artist info in Track? Current interface has specific fields */}
-                        <p className="text-xs text-zinc-400 truncate">Track {currentTrack.track_number}</p>
+                        <p className="text-xs text-zinc-400 truncate">
+                            {currentAlbum?.artist || `Track ${currentTrack.track_number}`}
+                        </p>
                     </div>
                 </div>
 
@@ -58,26 +69,35 @@ export default function PlayerBar() {
                     </div>
 
                     {/* Progress Bar */}
-                    <div className="w-full flex items-center gap-3 text-xs text-zinc-500 font-mono">
-                        <span>{formatTime(progress)}</span>
-                        <div className="flex-1 h-1 bg-white/10 rounded-full cursor-pointer relative group"
+                    <div className="w-full flex items-center gap-3 text-xs font-mono">
+                        <span className="text-zinc-400 min-w-[40px] text-right">{formatTime(progress)}</span>
+                        <div className="flex-1 h-1.5 bg-white/10 rounded-full cursor-pointer relative group hover:h-2 transition-all"
                             onClick={(e) => {
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                const percent = (e.clientX - rect.left) / rect.width;
-                                seek(percent * duration);
+                                if (displayDuration > 0) {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const percent = (e.clientX - rect.left) / rect.width;
+                                    seek(percent * displayDuration);
+                                }
                             }}
                         >
+                            {/* Background track */}
+                            <div className="absolute inset-0 rounded-full overflow-hidden">
+                                {/* Progress fill with glow */}
+                                <div
+                                    className="h-full bg-gradient-to-r from-[#f4d35e] to-[#ffd700] rounded-full transition-all duration-150 relative"
+                                    style={{ width: displayDuration > 0 ? `${(progress / displayDuration) * 100}%` : '0%' }}
+                                >
+                                    {/* Glow effect */}
+                                    <div className="absolute inset-0 bg-[#f4d35e] blur-sm opacity-50" />
+                                </div>
+                            </div>
+                            {/* Thumb indicator - always visible when playing */}
                             <div
-                                className="absolute top-0 left-0 h-full bg-[#f4d35e] rounded-full"
-                                style={{ width: `${(progress / duration) * 100}%` }}
-                            />
-                            {/* Thumb on hover */}
-                            <div
-                                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                                style={{ left: `${(progress / duration) * 100}%` }}
+                                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 bg-white rounded-full shadow-lg shadow-black/30 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                                style={{ left: displayDuration > 0 ? `${(progress / displayDuration) * 100}%` : '0%' }}
                             />
                         </div>
-                        <span>{formatTime(duration)}</span>
+                        <span className="text-zinc-400 min-w-[40px]">{displayDuration > 0 ? formatTime(displayDuration) : '--:--'}</span>
                     </div>
                 </div>
 

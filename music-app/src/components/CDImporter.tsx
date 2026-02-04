@@ -28,6 +28,13 @@ export default function CDImporter() {
     }, []);
 
     const [metadata, setMetadata] = useState<any>(null);
+    const [isEditingMetadata, setIsEditingMetadata] = useState(false);
+    const [editedMetadata, setEditedMetadata] = useState<any>(null);
+
+    // Progress tracking
+    const [currentTrack, setCurrentTrack] = useState(0);
+    const [totalTracks, setTotalTracks] = useState(0);
+    const [ripStartTime, setRipStartTime] = useState<number | null>(null);
 
     const checkSystem = async () => {
         try {
@@ -35,6 +42,7 @@ export default function CDImporter() {
             console.log("System Status Object:", sys); // Log full object to see Connection Errors
             if (!sys.ffmpeg_found) {
                 setFfmpegMissing(true);
+                if (sys.error) setMessage(`Error: ${sys.error}`);
             } else {
                 setFfmpegMissing(false);
             }
@@ -44,22 +52,26 @@ export default function CDImporter() {
     };
 
     const scanDrives = async () => {
+        console.log("Starting Drive Scan...");
         setStatus("scanning");
         setMessage("Scanning for devices...");
         setMetadata(null);
 
         try {
             const data = await api.system.getDrives();
+            console.log("Drive Scan Result:", data);
             setDrives(data.drives || []);
             if (data.drives && data.drives.length > 0) {
+                console.log("Selecting First Drive:", data.drives[0]);
                 setSelectedDrive(data.drives[0]);
                 setMessage(`Found ${data.drives.length} drive(s).`);
             } else {
+                console.log("No Drives Found");
                 setMessage("No optical drives found.");
             }
             setStatus("idle");
         } catch (err: any) {
-            console.error(err);
+            console.error("Scan Error:", err);
             setStatus("error");
             setMessage(err.message || "Failed to access hardware.");
         }
@@ -74,56 +86,142 @@ export default function CDImporter() {
         if (selectedDrive) {
             fetchMetadata(selectedDrive);
         } else {
+            console.log("No drive selected, skipping metadata fetch");
             setMetadata(null);
         }
     }, [selectedDrive]);
 
     const fetchMetadata = async (drive: string) => {
+        console.log(`Fetching Metadata for drive: ${drive}`);
         setMessage("Reading Disc...");
+        setIsEditingMetadata(false);
         try {
             const meta = await api.system.getCdMetadata(drive);
-            if (meta && !meta.error) {
+            console.log("Metadata Result:", meta);
+
+            // Check if we have track data even if there's an error (fallback metadata)
+            if (meta && meta.tracks && meta.tracks.length > 0) {
                 setMetadata(meta);
-                setMessage(`Ready to import: ${meta.album} by ${meta.artist}`);
+                setEditedMetadata(null); // Reset edited metadata
+                if (meta.error) {
+                    // Has tracks but metadata lookup failed
+                    setMessage(`Audio CD detected (${meta.tracks.length} tracks). Metadata lookup failed - you can still import with basic track names.`);
+                } else {
+                    // Full metadata available
+                    setMessage(`Ready to import: ${meta.album} by ${meta.artist}`);
+                }
+            } else if (meta && meta.error) {
+                // Error and no track data
+                setMetadata(null);
+                setMessage(`Audio CD detected. Error: ${meta.error}`);
             } else {
                 setMetadata(null);
-                setMessage("Audio CD detected. No metadata found.");
+                setMessage(`Audio CD detected. Metadata lookup failed (Unknown).`);
             }
-        } catch (e) {
+        } catch (e: any) {
             console.warn("Metadata fetch failed", e);
             setMetadata(null);
-            setMessage("Audio CD detected. Metadata lookup failed.");
+            setMessage(`Audio CD detected. Lookup failed: ${e.message || e}`);
         }
+    };
+
+    const startEditingMetadata = () => {
+        // Initialize edited metadata with current values
+        setEditedMetadata(JSON.parse(JSON.stringify(metadata)));
+        setIsEditingMetadata(true);
+    };
+
+    const saveMetadataEdits = () => {
+        setMetadata(editedMetadata);
+        setIsEditingMetadata(false);
+        setMessage(`Ready to import: ${editedMetadata.album} by ${editedMetadata.artist}`);
+    };
+
+    const cancelMetadataEdits = () => {
+        setEditedMetadata(null);
+        setIsEditingMetadata(false);
+    };
+
+    const updateEditedField = (field: string, value: any) => {
+        setEditedMetadata({ ...editedMetadata, [field]: value });
+    };
+
+    const updateEditedTrack = (index: number, field: string, value: any) => {
+        const updatedTracks = [...editedMetadata.tracks];
+        updatedTracks[index] = { ...updatedTracks[index], [field]: value };
+        setEditedMetadata({ ...editedMetadata, tracks: updatedTracks });
     };
 
 
     const startRip = async () => {
         if (!selectedDrive) return;
+
+        // Exit editing mode if active
+        if (isEditingMetadata) {
+            setIsEditingMetadata(false);
+        }
+
+        // Set up progress tracking
+        const trackCount = metadata?.tracks?.length || 12;
+        setTotalTracks(trackCount);
+        setCurrentTrack(0);
+        setRipStartTime(Date.now());
+
         setStatus("ripping");
-        setMessage("Starting import process...");
+        setMessage(`Preparing to import ${trackCount} tracks...`);
+
+        // Listen for real-time progress updates from Electron
+        if (api.isElectron() && (window as any).electronAPI?.on) {
+            (window as any).electronAPI.on('rip-progress', (data: any) => {
+                console.log('[CDImporter] Progress update:', data);
+
+                if (data.type === 'progress') {
+                    setCurrentTrack(data.current);
+                    setTotalTracks(data.total);
+                    setMessage(data.message);
+                } else if (data.type === 'saved') {
+                    setMessage('Saved to library!');
+                }
+            });
+        }
+
         try {
             const data = await api.system.ripCd({
                 drive_path: selectedDrive,
                 token,
                 mongo_user_id: user?.id,
-                metadata: metadata // Pass fetched metadata
+                metadata: metadata
             });
 
+            // Cleanup listener
+            if (api.isElectron() && (window as any).electronAPI?.removeAllListeners) {
+                (window as any).electronAPI.removeAllListeners('rip-progress');
+            }
+
             if (data.status === "started" || data.status === "completed") {
+                setCurrentTrack(trackCount);
                 setMessage("Import completed. Finalizing library...");
-                // If it returns completed immediately (simulated), we still show success
-                // If it returns started, we wait (or the service handles it)
-                // For now, let's keep the timeout as a UI feedback loop if the backend is async
                 setTimeout(() => {
                     setStatus("completed");
-                    setMessage("Import completed successfully.");
-                }, 2000);
+                    const albumName = metadata?.album || "Album";
+                    const artistName = metadata?.artist || "Unknown Artist";
+                    setMessage(`"${albumName}" by ${artistName} has been added to your library!`);
+                    setCurrentTrack(0);
+                    setTotalTracks(0);
+                }, 1500);
             } else {
                 throw new Error("Import failed");
             }
-        } catch (err) {
+        } catch (err: any) {
+            // Cleanup listener
+            if (api.isElectron() && (window as any).electronAPI?.removeAllListeners) {
+                (window as any).electronAPI.removeAllListeners('rip-progress');
+            }
+            console.error("Import Error Details:", err);
             setStatus("error");
-            setMessage("Error starting import.");
+            setMessage(`Import failed: ${err.message || JSON.stringify(err)}`);
+            setCurrentTrack(0);
+            setTotalTracks(0);
         }
     };
 
@@ -192,6 +290,9 @@ export default function CDImporter() {
                             <div>
                                 <h4 className="text-sm font-semibold text-yellow-200">Driver Missing</h4>
                                 <p className="text-xs text-yellow-200/80 mt-1">High-fidelity ripping driver (ffmpeg) not found. Imports will be simulated (no audio).</p>
+                                {message && message.includes("Error") && (
+                                    <p className="text-xs text-red-300 mt-1 font-mono">{message}</p>
+                                )}
                             </div>
                         </div>
                     )}
@@ -243,20 +344,31 @@ export default function CDImporter() {
                                     </div>
 
                                     {/* Album Preview Card */}
-                                    {metadata && (
+                                    {metadata && !isEditingMetadata && (
                                         <motion.div
                                             initial={{ opacity: 0, y: 10 }}
                                             animate={{ opacity: 1, y: 0 }}
                                             className="rounded-xl bg-zinc-900/40 border border-zinc-800 p-4"
                                         >
                                             <div className="flex justify-between items-start mb-2">
-                                                <div>
+                                                <div className="flex-1">
                                                     <h3 className="font-bold text-white text-lg leading-tight">{metadata.album}</h3>
                                                     <p className="text-zinc-400 text-sm">{metadata.artist}</p>
                                                 </div>
-                                                <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-md">
-                                                    {metadata.tracks?.length || '?'} Tracks
-                                                </span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-md">
+                                                        {metadata.tracks?.length || '?'} Tracks
+                                                    </span>
+                                                    <button
+                                                        onClick={startEditingMetadata}
+                                                        className="text-xs text-border hover:text-primary transition-colors p-1"
+                                                        title="Edit metadata"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
                                             </div>
 
                                             <div className="max-h-32 overflow-y-auto pr-1 space-y-1 custom-scrollbar">
@@ -272,6 +384,73 @@ export default function CDImporter() {
                                                         )}
                                                     </div>
                                                 ))}
+                                            </div>
+                                        </motion.div>
+                                    )}
+
+                                    {/* Metadata Editing Form */}
+                                    {isEditingMetadata && editedMetadata && (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            className="rounded-xl bg-zinc-900/40 border border-zinc-800 p-4 space-y-4"
+                                        >
+                                            <div className="flex justify-between items-center mb-2">
+                                                <h3 className="font-bold text-white text-sm">Edit Metadata</h3>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={cancelMetadataEdits}
+                                                        className="text-xs text-zinc-400 hover:text-zinc-200 px-2 py-1 rounded transition-colors"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                    <button
+                                                        onClick={saveMetadataEdits}
+                                                        className="text-xs text-white bg-border hover:bg-primary px-3 py-1 rounded transition-colors font-medium"
+                                                    >
+                                                        Save
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* Album & Artist Inputs */}
+                                            <div className="space-y-3">
+                                                <div>
+                                                    <label className="text-xs text-zinc-500 mb-1 block">Album Title</label>
+                                                    <input
+                                                        type="text"
+                                                        value={editedMetadata.album}
+                                                        onChange={(e) => updateEditedField('album', e.target.value)}
+                                                        className="w-full bg-zinc-800/50 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-border/30"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-zinc-500 mb-1 block">Artist</label>
+                                                    <input
+                                                        type="text"
+                                                        value={editedMetadata.artist}
+                                                        onChange={(e) => updateEditedField('artist', e.target.value)}
+                                                        className="w-full bg-zinc-800/50 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-border/30"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Track List Editing */}
+                                            <div>
+                                                <label className="text-xs text-zinc-500 mb-2 block">Tracks</label>
+                                                <div className="max-h-48 overflow-y-auto pr-1 space-y-2 custom-scrollbar">
+                                                    {editedMetadata.tracks?.map((track: any, idx: number) => (
+                                                        <div key={idx} className="flex items-center gap-2">
+                                                            <span className="text-xs text-zinc-600 font-mono w-6">{track.track_number}.</span>
+                                                            <input
+                                                                type="text"
+                                                                value={track.title}
+                                                                onChange={(e) => updateEditedTrack(idx, 'title', e.target.value)}
+                                                                className="flex-1 bg-zinc-800/50 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-border/30"
+                                                            />
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </div>
                                         </motion.div>
                                     )}
@@ -309,7 +488,39 @@ export default function CDImporter() {
                                             ) : (
                                                 <svg className="w-5 h-5 text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                                             )}
-                                            <p className="leading-snug">{message}</p>
+                                            <div className="flex-1">
+                                                <p className="leading-snug">{message}</p>
+                                                {status === 'ripping' && (
+                                                    <div className="mt-3">
+                                                        <div className="flex justify-between text-xs text-zinc-400 mb-1">
+                                                            <span>Progress</span>
+                                                            <span>
+                                                                {totalTracks === 100
+                                                                    ? `${currentTrack}%`
+                                                                    : `${currentTrack} / ${totalTracks} tracks`
+                                                                }
+                                                            </span>
+                                                        </div>
+                                                        <div className="w-full bg-zinc-700 rounded-full h-2 overflow-hidden">
+                                                            <div
+                                                                className="bg-gradient-to-r from-primary to-border h-full rounded-full transition-all duration-300 ease-out"
+                                                                style={{ width: `${(currentTrack / totalTracks) * 100}%` }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {status === 'completed' && (
+                                                    <a
+                                                        href="/library"
+                                                        className="inline-flex items-center gap-1.5 mt-2 text-xs font-semibold text-green-300 hover:text-green-100 transition-colors"
+                                                    >
+                                                        Go to Library
+                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                                        </svg>
+                                                    </a>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                 </motion.div>

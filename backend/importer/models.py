@@ -6,7 +6,7 @@ class Album(models.Model):
     title = models.CharField(max_length=255)
     artist = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
-    cover_art = models.ImageField(upload_to='covers/', null=True, blank=True)
+    cover_art = models.URLField(max_length=500, null=True, blank=True)
 
     def __str__(self):
         return f"{self.title} by {self.artist}"

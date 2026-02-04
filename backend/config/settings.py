@@ -7,9 +7,21 @@ from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# For bundled app, use persistent directory instead of temp
+import sys
+if getattr(sys, 'frozen', False):
+    # Running in PyInstaller bundle - use user's home directory
+    PERSISTENT_DIR = Path.home() / '.ghostaudio'
+    PERSISTENT_DIR.mkdir(exist_ok=True)
+    DB_DIR = PERSISTENT_DIR
+else:
+    # Running in development
+    DB_DIR = BASE_DIR
+
 # Load environment variables from Next.js .env.local
 env_path = BASE_DIR.parent / 'music-app' / '.env.local'
-load_dotenv(env_path)
+if env_path.exists():
+    load_dotenv(env_path)
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-test-key')
 
@@ -80,7 +92,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database: Using pymongo directly, so we leave this default or set to dummy
 DATABASES = {
     'default': dj_database_url.config(
-        default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'),
+        default='sqlite:///' + str(DB_DIR / 'db.sqlite3'),
         conn_max_age=600
     )
 }
@@ -118,7 +130,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
-    )
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.AllowAny',
+    ),
+    'UNAUTHENTICATED_USER': None,
 }
 
 from datetime import timedelta

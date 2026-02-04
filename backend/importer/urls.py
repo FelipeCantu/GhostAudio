@@ -21,9 +21,16 @@ urlpatterns = [
     path('drives/', views.list_drives, name='list_drives'),
     path('metadata/', views.get_cd_metadata, name='get_cd_metadata'),
     path('rip/', views.rip_cd, name='rip_cd'),
+    path('rip/stream/', views.rip_cd_stream, name='rip_cd_stream'),
 
     # Dashboard API
     path('dashboard/stats/', views.dashboard_stats, name='dashboard_stats'),
+
+    # MongoDB Direct (Desktop App)
+    path('mongo/import-local/', views.mongo_import_local, name='mongo_import_local'),
+    path('mongo/library/', views.mongo_library, name='mongo_library'),
+    path('mongo/library/<str:album_id>/', views.mongo_delete_album, name='mongo_delete_album'),
+    path('mongo/stats/', views.mongo_stats, name='mongo_stats'),
 
     # Library API
     path('', include(router.urls)),

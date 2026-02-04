@@ -2,7 +2,7 @@ const { exec, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { app } = require('electron');
+const { app, net } = require('electron');
 
 // Helper to run shell commands
 function runCommand(command) {
@@ -20,12 +20,34 @@ function runCommand(command) {
 const Services = {
     // Get list of CD/DVD drives on Windows
     getSystemStatus: async () => {
+        const url = 'http://127.0.0.1:8000/api/system/check/';
         try {
-            const response = await fetch('http://127.0.0.1:8000/api/system/check/');
-            if (!response.ok) return { ffmpeg_found: false, error: 'Backend unreachable' };
+            const response = await fetch(url);
+            if (!response.ok) return { ffmpeg_found: false, error: `Backend status: ${response.status}` };
             return await response.json();
         } catch (e) {
-            return { ffmpeg_found: false, error: e.message };
+            console.warn("Standard fetch failed, trying net.request fallback...", e);
+            try {
+                return await new Promise((resolve, reject) => {
+                    const request = net.request(url);
+                    request.on('response', (response) => {
+                        let data = '';
+                        response.on('data', (chunk) => data += chunk);
+                        response.on('end', () => {
+                            try {
+                                resolve(JSON.parse(data));
+                            } catch (parseErr) {
+                                reject(parseErr);
+                            }
+                        });
+                    });
+                    request.on('error', (err) => reject(err));
+                    request.end();
+                });
+            } catch (netErr) {
+                console.error("All connection attempts failed:", netErr);
+                return { ffmpeg_found: false, error: `Connection failed: ${e.message}` };
+            }
         }
     },
 
@@ -106,46 +128,168 @@ const Services = {
         return drives || [];
     },
 
-    // Rip CD - Proxies to Django Backend
+    getCdMetadata: async (args) => {
+        const drivePath = args.drive_path;
+        console.log(`[Electron] Fetching Metadata for: ${drivePath}`);
+        const url = 'http://127.0.0.1:8000/api/metadata/';
+        const body = JSON.stringify({ drive_path: drivePath });
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: body
+            });
+            if (!response.ok) return { error: `Backend status: ${response.status}` };
+            return await response.json();
+        } catch (e) {
+            console.warn("Standard fetch failed for metadata, trying net.request fallback...", e);
+            try {
+                return await new Promise((resolve, reject) => {
+                    const request = net.request({
+                        method: 'POST',
+                        url: url,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+
+                    request.on('response', (response) => {
+                        let data = '';
+                        response.on('data', (chunk) => data += chunk);
+                        response.on('end', () => {
+                            try {
+                                resolve(JSON.parse(data));
+                            } catch (parseErr) {
+                                reject(parseErr);
+                            }
+                        });
+                    });
+                    request.on('error', (err) => reject(err));
+                    request.write(body);
+                    request.end();
+                });
+            } catch (netErr) {
+                console.error("All metadata connection attempts failed:", netErr);
+                return { error: `Connection failed: ${e.message}` };
+            }
+        }
+    },
+
+    // Rip CD - Proxies to Django Backend with streaming progress
     ripCD: async (args, eventSender) => {
         // args contains { drive_path, mongo_user_id, token, metadata }
         const drivePath = args.drive_path;
         const mongoUserId = args.mongo_user_id;
-        const token = args.token;
         const metadata = args.metadata;
 
-        console.log(`[Electron] Requesting Rip for drive: ${drivePath}, User: ${mongoUserId}`);
+        console.log(`[Electron ripCD] Starting - drive: ${drivePath}, user: ${mongoUserId}`);
+        console.log(`[Electron ripCD] Metadata:`, JSON.stringify(metadata).substring(0, 200));
 
-        try {
-            // Call Django API
-            const response = await fetch('http://127.0.0.1:8000/api/rip/', {
+        // Use streaming endpoint for real-time progress
+        const url = 'http://127.0.0.1:8000/api/rip/stream/';
+        const body = JSON.stringify({
+            drive_path: drivePath,
+            mongo_user_id: mongoUserId,
+            metadata: metadata
+        });
+
+        return new Promise((resolve, reject) => {
+            console.log('[Electron ripCD] Starting streaming request...');
+
+            const request = net.request({
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    drive_path: drivePath,
-                    mongo_user_id: mongoUserId,
-                    metadata: metadata
-                })
+                url: url
             });
 
-            const data = await response.json();
+            request.setHeader('Content-Type', 'application/json');
 
-            if (!response.ok) {
-                throw new Error(data.message || 'Rip failed significantly');
-            }
+            let lastProgress = null;
 
-            return data; // { status: 'completed', album: ... }
+            request.on('response', (response) => {
+                console.log(`[Electron ripCD] Response status: ${response.statusCode}`);
 
-        } catch (e) {
-            console.error("[Electron] Rip Proxy Failed:", e);
-            throw e;
-        }
+                if (response.statusCode !== 200) {
+                    let errorData = '';
+                    response.on('data', (chunk) => errorData += chunk);
+                    response.on('end', () => {
+                        reject(new Error(`Server error: ${response.statusCode} - ${errorData}`));
+                    });
+                    return;
+                }
+
+                response.on('data', (chunk) => {
+                    const text = chunk.toString();
+                    // Parse SSE format: "data: {...}\n\n"
+                    const lines = text.split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                console.log('[Electron ripCD] Progress:', data);
+
+                                // Send progress to renderer
+                                if (eventSender && !eventSender.isDestroyed()) {
+                                    eventSender.send('rip-progress', data);
+                                }
+
+                                lastProgress = data;
+
+                                if (data.type === 'complete') {
+                                    resolve({ status: 'completed', tracks: data.tracks });
+                                } else if (data.type === 'error') {
+                                    reject(new Error(data.message));
+                                }
+                            } catch (parseErr) {
+                                // Ignore parse errors for partial chunks
+                            }
+                        }
+                    }
+                });
+
+                response.on('end', () => {
+                    console.log('[Electron ripCD] Stream ended');
+                    if (lastProgress?.type === 'complete') {
+                        resolve({ status: 'completed', tracks: lastProgress.tracks });
+                    } else if (!lastProgress || lastProgress.type !== 'error') {
+                        resolve({ status: 'completed' });
+                    }
+                });
+            });
+
+            request.on('error', (err) => {
+                console.error('[Electron ripCD] Request error:', err);
+                reject(err);
+            });
+
+            request.write(body);
+            request.end();
+        });
     },
 
-    getLibrary: async (token) => {
+    getLibrary: async (token, mongoUserId) => {
+        // Use MongoDB endpoint for desktop app
+        if (mongoUserId) {
+            try {
+                console.log(`[Electron] Fetching library for user: ${mongoUserId}`);
+                const response = await fetch(`http://127.0.0.1:8000/api/mongo/library/?user_id=${mongoUserId}`);
+                console.log(`[Electron] Library response status: ${response.status}`);
+                if (!response.ok) {
+                    const errText = await response.text();
+                    console.error(`[Electron] Library error response: ${errText}`);
+                    throw new Error('Failed to fetch library from MongoDB');
+                }
+                const data = await response.json();
+                console.log(`[Electron] Library data received: ${data.length} albums`);
+                if (data.length > 0) {
+                    console.log(`[Electron] First album tracks:`, data[0].tracks?.length || 0);
+                }
+                return data;
+            } catch (e) {
+                console.error("[Electron] MongoDB Library Fetch Failed:", e);
+                throw e;
+            }
+        }
+
+        // Fallback to Django auth (legacy)
         try {
             const response = await fetch('http://127.0.0.1:8000/api/library/', {
                 headers: {
@@ -160,7 +304,36 @@ const Services = {
         }
     },
 
-    getDashboardStats: async (token) => {
+    deleteAlbum: async (albumId, mongoUserId) => {
+        if (!mongoUserId || !albumId) {
+            throw new Error('Album ID and User ID required');
+        }
+        try {
+            const response = await fetch(`http://127.0.0.1:8000/api/mongo/library/${albumId}/?user_id=${mongoUserId}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) throw new Error('Failed to delete album');
+            return await response.json();
+        } catch (e) {
+            console.error("[Electron] Delete Album Failed:", e);
+            throw e;
+        }
+    },
+
+    getDashboardStats: async (token, mongoUserId) => {
+        // Use MongoDB endpoint for desktop app
+        if (mongoUserId) {
+            try {
+                const response = await fetch(`http://127.0.0.1:8000/api/mongo/stats/?user_id=${mongoUserId}`);
+                if (!response.ok) throw new Error('Failed to fetch stats from MongoDB');
+                return await response.json();
+            } catch (e) {
+                console.error("[Electron] MongoDB Stats Fetch Failed:", e);
+                throw e;
+            }
+        }
+
+        // Fallback to Django auth (legacy)
         try {
             const response = await fetch('http://127.0.0.1:8000/api/dashboard/stats/', {
                 headers: {

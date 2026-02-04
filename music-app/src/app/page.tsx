@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Disc, Download, Globe, Music, Shield, Zap } from "lucide-react";
 import Image from "next/image";
 import { motion } from "framer-motion";
+import { HeroVisual } from "@/components/landing/HeroVisual";
 
 export default function LandingPage() {
   return (
@@ -27,56 +28,47 @@ export default function LandingPage() {
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <section className="relative pt-32 pb-20 md:pt-48 md:pb-32 px-6">
-        <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-12 items-center">
+      <section className="relative h-screen min-h-[800px] w-full flex items-center overflow-hidden">
+        {/* Background 3D Scene - Massive & Right Aligned & Non-interactive */}
+        <div className="absolute right-[-20%] top-1/2 -translate-y-1/2 z-0 h-[160%] w-[160%] md:w-[100%] pointer-events-none">
+          <HeroVisual />
+        </div>
+
+        {/* Content */}
+        <div className="relative z-10 max-w-7xl mx-auto px-6 w-full grid md:grid-cols-2 gap-12 items-center pointer-events-none">
           <motion.div
             initial={{ opacity: 0, x: -50 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.8 }}
+            className="pointer-events-auto"
           >
-            <div className="inline-block px-4 py-2 rounded-full bg-white/5 border border-white/10 mb-6">
+            <div className="inline-block px-4 py-2 rounded-full bg-white/5 border border-white/10 mb-6 backdrop-blur-sm">
               <span className="text-[#f4d35e] text-sm font-bold tracking-wide uppercase">The Future of Local Audio</span>
             </div>
-            <h1 className="text-5xl md:text-7xl font-bold leading-tight mb-6">
+            <h1 className="text-5xl md:text-7xl font-bold leading-tight mb-6 drop-shadow-lg">
               Your Music.<br />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#f4d35e] to-[#ee964b]">
                 Uncompromised.
               </span>
             </h1>
-            <p className="text-lg text-zinc-400 mb-8 max-w-lg leading-relaxed">
+            <p className="text-lg text-zinc-300 mb-8 max-w-lg leading-relaxed drop-shadow-md">
               DiZC is the ultimate high-fidelity music player for your local collection.
               Experience bit-perfect playback, seamless CD ripping, and a stunning interface designed for audiophiles.
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
-              <a href="/downloads/DiZC-Setup.exe" download className="px-8 py-4 bg-white text-[#0d3b66] font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-gray-100 transition-transform hover:scale-105">
+              <a href="/downloads/DiZC-Setup.exe" download className="px-8 py-4 bg-white text-[#0d3b66] font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-gray-100 transition-transform hover:scale-105 shadow-lg shadow-white/10">
                 <Download size={20} />
                 Download for Windows
               </a>
-              <Link href="/app" className="px-8 py-4 bg-white/10 backdrop-blur-md border border-white/10 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-white/20 transition-transform hover:scale-105">
+              <Link href="/app" className="px-8 py-4 bg-white/10 backdrop-blur-md border border-white/10 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-white/20 transition-transform hover:scale-105 shadow-lg">
                 <Globe size={20} />
                 Open Web Player
               </Link>
             </div>
           </motion.div>
 
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.8, delay: 0.2 }}
-            className="relative"
-          >
-            <div className="relative z-10 rounded-2xl overflow-hidden border border-white/10 shadow-2xl shadow-[#f4d35e]/10 bg-[#0d3b66]">
-              <div className="aspect-[16/10] bg-gradient-to-br from-[#1b263b] to-[#0d1b2a] flex items-center justify-center group relative overflow-hidden">
-                <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-20"></div>
-                <Image src="/logo.png" alt="App Screen" width={200} height={200} className="object-contain opacity-50 blur-sm group-hover:blur-0 transition-all duration-700" />
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <span className="text-2xl font-bold tracking-widest uppercase opacity-20 group-hover:opacity-0 transition-opacity">App Preview</span>
-                </div>
-              </div>
-            </div>
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-[120%] bg-[#f4d35e]/20 blur-[100px] -z-10 rounded-full pointer-events-none" />
-          </motion.div>
+          {/* Spacer to push content to left if needed, or we can center it if we want the 3D to be the main visual everywhere */}
+          {/* <motion.div ... /> was here, now removed as the 3D is background */}
         </div>
       </section>
 

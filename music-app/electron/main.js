@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const envPath = app.isPackaged
@@ -14,6 +14,187 @@ let backendProcess = null;
 
 const isDev = !app.isPackaged;
 // const appServe = isDev ? null : serve({ directory: path.join(__dirname, '../out') }); // Removed
+
+
+
+// Custom Protocol Handler for Production
+if (!isDev) {
+  protocol.registerSchemesAsPrivileged([
+    { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true } }
+  ]);
+}
+
+// Register 'localfile' protocol for serving local audio files
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'localfile', privileges: { secure: true, standard: true, stream: true, supportFetchAPI: true } }
+]);
+
+// Single Instance Lock
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // Someone tried to run a second instance, we should focus our window.
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.on('ready', () => {
+    if (!isDev) {
+      protocol.handle('app', (request) => {
+        const u = new URL(request.url);
+        let reqPath = decodeURIComponent(u.pathname);
+
+        // 1. Handle RSC Special Cases (Next.js App Router mismatches)
+        if (reqPath.includes('__next') && reqPath.endsWith('.txt')) {
+          const parts = reqPath.split('/');
+          const segment = parts[1]; // e.g. 'import' from /import/...
+          const potentialRSC = path.join(__dirname, '../out', `${segment}.txt`);
+          if (fs.existsSync(potentialRSC)) {
+            return net.fetch('file:///' + potentialRSC);
+          }
+        }
+
+        // 2. Standard Static File Serving with Extension Resolution
+        let filePath = path.join(__dirname, '../out', reqPath);
+
+        // Force / to /index.html
+        if (reqPath === '/' || reqPath === '') {
+          filePath = path.join(__dirname, '../out', 'index.html');
+        }
+
+        // Check if exact file exists
+        if (fs.existsSync(filePath) && fs.lstatSync(filePath).isFile()) {
+          return net.fetch('file:///' + filePath);
+        }
+
+        // Try appending .html (e.g. /library -> /library.html)
+        const htmlPath = filePath + '.html';
+        if (fs.existsSync(htmlPath)) {
+          return net.fetch('file:///' + htmlPath);
+        }
+
+        // Try appending /index.html
+        const indexPath = path.join(filePath, 'index.html');
+        if (fs.existsSync(indexPath)) {
+          return net.fetch('file:///' + indexPath);
+        }
+
+        console.error(`File not found: ${reqPath}`);
+        return net.fetch('file:///' + filePath);
+      });
+    }
+
+    // Local file protocol handler for audio files
+    protocol.handle('localfile', (request) => {
+      let filePath = decodeURIComponent(request.url.replace('localfile://', ''));
+      // Fix Windows drive letter - URL parsing removes the colon
+      // e.g., "c/Users/..." becomes "C:/Users/..."
+      if (/^[a-zA-Z]\//.test(filePath)) {
+        filePath = filePath[0].toUpperCase() + ':' + filePath.slice(1);
+      }
+      console.log('[localfile protocol] Serving:', filePath);
+
+      // Get file stats for proper Content-Length header (needed for audio duration)
+      try {
+        const stats = fs.statSync(filePath);
+        const fileSize = stats.size;
+
+        // Determine content type based on extension
+        const ext = path.extname(filePath).toLowerCase();
+        const mimeTypes = {
+          '.mp3': 'audio/mpeg',
+          '.wav': 'audio/wav',
+          '.flac': 'audio/flac',
+          '.aac': 'audio/aac',
+          '.m4a': 'audio/mp4',
+          '.ogg': 'audio/ogg'
+        };
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+        // Handle Range requests for seeking
+        const rangeHeader = request.headers.get('Range');
+        if (rangeHeader) {
+          const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+          if (match) {
+            const start = parseInt(match[1], 10);
+            const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+            const chunkSize = end - start + 1;
+
+            const stream = fs.createReadStream(filePath, { start, end });
+            return new Response(stream, {
+              status: 206,
+              headers: {
+                'Content-Type': contentType,
+                'Content-Length': chunkSize.toString(),
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes'
+              }
+            });
+          }
+        }
+
+        // Full file response
+        const stream = fs.createReadStream(filePath);
+        return new Response(stream, {
+          status: 200,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Length': fileSize.toString(),
+            'Accept-Ranges': 'bytes'
+          }
+        });
+      } catch (err) {
+        console.error('[localfile protocol] Error:', err);
+        return new Response('File not found', { status: 404 });
+      }
+    });
+
+    createWindow();
+  });
+}
+
+function startBackend() {
+  if (isDev) return;
+
+  const backendExe = path.join(process.resourcesPath, 'ghost_backend.exe');
+  console.log('Spawning backend from:', backendExe);
+
+  if (!fs.existsSync(backendExe)) {
+    console.error('Backend executable not found!');
+    return;
+  }
+
+  backendProcess = spawn(backendExe, [], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: path.dirname(backendExe),
+    env: {
+      ...process.env,
+      MONGODB_URI: process.env.MONGODB_URI,
+      DJANGO_SETTINGS_MODULE: 'config.settings'
+    }
+  });
+
+  backendProcess.stdout.on('data', (data) => {
+    console.log('[Backend]:', data.toString());
+  });
+
+  backendProcess.stderr.on('data', (data) => {
+    console.error('[Backend Error]:', data.toString());
+  });
+
+  backendProcess.on('error', (err) => {
+    console.error('Failed to start backend:', err);
+  });
+
+  backendProcess.on('exit', (code, signal) => {
+    console.log(`Backend exited with code ${code} and signal ${signal}`);
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -31,85 +212,17 @@ function createWindow() {
     const startUrl = process.env.ELECTRON_START_URL || 'http://localhost:3000';
     mainWindow.loadURL(startUrl + '/app');
   } else {
-    // Load the App Dashboard
+    // Load UI immediately
     mainWindow.loadURL('app://-/app.html');
 
-    // Spawn Backend
-    const backendExe = path.join(process.resourcesPath, 'ghost_backend.exe');
-    console.log('Spawning backend from:', backendExe);
-
-    backendProcess = spawn(backendExe, [], {
-      stdio: 'ignore',
-      env: {
-        ...process.env,
-        MONGODB_URI: process.env.MONGODB_URI
-      }
-    });
-
-    backendProcess.on('error', (err) => {
-      console.error('Failed to start backend:', err);
-    });
+    // Start backend in background
+    startBackend();
   }
 
   mainWindow.on('closed', function () {
     mainWindow = null;
   });
 }
-
-// Custom Protocol Handler for Production
-if (!isDev) {
-  protocol.registerSchemesAsPrivileged([
-    { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true } }
-  ]);
-}
-
-app.on('ready', () => {
-  if (!isDev) {
-    protocol.handle('app', (request) => {
-      const u = new URL(request.url);
-      let reqPath = decodeURIComponent(u.pathname);
-
-      // 1. Handle RSC Special Cases (Next.js App Router mismatches)
-      if (reqPath.includes('__next') && reqPath.endsWith('.txt')) {
-        const parts = reqPath.split('/');
-        const segment = parts[1]; // e.g. 'import' from /import/...
-        const potentialRSC = path.join(__dirname, '../out', `${segment}.txt`);
-        if (fs.existsSync(potentialRSC)) {
-          return net.fetch('file:///' + potentialRSC);
-        }
-      }
-
-      // 2. Standard Static File Serving with Extension Resolution
-      let filePath = path.join(__dirname, '../out', reqPath);
-
-      // Force / to /index.html
-      if (reqPath === '/' || reqPath === '') {
-        filePath = path.join(__dirname, '../out', 'index.html');
-      }
-
-      // Check if exact file exists
-      if (fs.existsSync(filePath) && fs.lstatSync(filePath).isFile()) {
-        return net.fetch('file:///' + filePath);
-      }
-
-      // Try appending .html (e.g. /library -> /library.html)
-      const htmlPath = filePath + '.html';
-      if (fs.existsSync(htmlPath)) {
-        return net.fetch('file:///' + htmlPath);
-      }
-
-      // Try appending /index.html
-      const indexPath = path.join(filePath, 'index.html');
-      if (fs.existsSync(indexPath)) {
-        return net.fetch('file:///' + indexPath);
-      }
-
-      console.error(`File not found: ${reqPath}`);
-      return net.fetch('file:///' + filePath);
-    });
-  }
-  createWindow();
-});
 
 // IPC Handlers
 ipcMain.handle('get-drives', async () => {
@@ -124,14 +237,19 @@ ipcMain.handle('rip-cd', async (event, args) => {
   try {
     const drive = args.drive_path;
     if (!drive) throw new Error('No drive path provided');
-    const tracks = await services.ripCD(args, event.sender);
-    return { status: 'started', drive: drive, tracks: tracks };
-    ripInBackground(args, event.sender);
-    return { status: 'started' };
+    console.log('[IPC rip-cd] Starting rip for:', drive);
+    const result = await services.ripCD(args, event.sender);
+    console.log('[IPC rip-cd] Result:', result);
+    // Return the backend response directly (it has status: 'completed')
+    return result;
   } catch (err) {
-    console.error("IPC Error:", err);
+    console.error("[IPC rip-cd] Error:", err);
     return { status: 'error', message: err.message };
   }
+});
+
+ipcMain.handle('get-cd-metadata', async (event, args) => {
+  return await services.getCdMetadata(args);
 });
 
 const dbConnect = require('./db');
@@ -197,25 +315,121 @@ ipcMain.handle('auth-me', async (event, token) => {
   }
 });
 
-ipcMain.handle('dashboard-stats', async (event, token) => {
+ipcMain.handle('dashboard-stats', async (event, args) => {
   try {
-    return await services.getDashboardStats(token);
+    // args can be { token, mongo_user_id } or just token string (legacy)
+    const token = typeof args === 'string' ? args : args?.token;
+    const mongoUserId = typeof args === 'object' ? args?.mongo_user_id : null;
+    return await services.getDashboardStats(token, mongoUserId);
   } catch (err) {
     console.error("Dashboard Stats Error:", err);
     return { total_albums: 0, total_tracks: 0, recent_albums: [] };
   }
 });
 
-ipcMain.handle('library-get', async (event, token) => {
-  return await services.getLibrary(token);
+ipcMain.handle('library-get', async (event, args) => {
+  // args can be { token, mongo_user_id } or just token string (legacy)
+  const token = typeof args === 'string' ? args : args?.token;
+  const mongoUserId = typeof args === 'object' ? args?.mongo_user_id : null;
+  return await services.getLibrary(token, mongoUserId);
+});
+
+ipcMain.handle('library-delete', async (event, args) => {
+  const { album_id, mongo_user_id } = args;
+  return await services.deleteAlbum(album_id, mongo_user_id);
+});
+
+// Import local audio files
+ipcMain.handle('import-local-files', async (event, args) => {
+  const { mongo_user_id } = args;
+
+  // Open file dialog
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Audio Files',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Audio Files', extensions: ['mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg'] }
+    ]
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true };
+  }
+
+  const files = result.filePaths;
+  console.log('[Import Local] Selected files:', files);
+
+  // Get library path
+  const os = require('os');
+  const libraryPath = path.join(os.homedir(), 'Music', 'GhostAudio Library');
+
+  // Prompt for album info
+  // For simplicity, derive album name from folder or use "Imported Album"
+  const firstFile = files[0];
+  const folderName = path.basename(path.dirname(firstFile));
+  const albumName = folderName !== 'Music' && folderName !== os.homedir() ? folderName : 'Imported Album';
+  const artistName = 'Unknown Artist';
+
+  // Create album folder
+  const albumFolder = path.join(libraryPath, artistName, albumName);
+  if (!fs.existsSync(albumFolder)) {
+    fs.mkdirSync(albumFolder, { recursive: true });
+  }
+
+  // Copy files and build track list
+  const tracks = [];
+  for (let i = 0; i < files.length; i++) {
+    const srcFile = files[i];
+    const fileName = path.basename(srcFile);
+    const destFile = path.join(albumFolder, fileName);
+
+    // Copy file if not already in library
+    if (srcFile !== destFile) {
+      fs.copyFileSync(srcFile, destFile);
+    }
+
+    // Extract track name from filename (remove extension and leading numbers)
+    let trackTitle = path.basename(fileName, path.extname(fileName));
+    trackTitle = trackTitle.replace(/^\d+[\s\-_.]*/, ''); // Remove leading track numbers
+
+    tracks.push({
+      title: trackTitle || `Track ${i + 1}`,
+      trackNumber: i + 1,
+      audioFile: destFile,
+      duration: '00:00'
+    });
+  }
+
+  // Save to MongoDB via backend
+  try {
+    const response = await fetch('http://127.0.0.1:8000/api/mongo/import-local/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: mongo_user_id,
+        title: albumName,
+        artist: artistName,
+        tracks: tracks
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to save album');
+    }
+
+    const data = await response.json();
+    console.log('[Import Local] Album saved:', data);
+    return { success: true, album: data };
+  } catch (err) {
+    console.error('[Import Local] Error saving album:', err);
+    return { success: false, error: err.message };
+  }
 });
 
 // Library add removed - handled by Rip CD process
 
 
-app.on('ready', () => {
-  createWindow();
-});
+
 
 app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') {

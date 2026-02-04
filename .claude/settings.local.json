@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\".\\\\venv\\\\Scripts\\\\python\" build_exe.py)",
+      "Bash(taskkill:*)",
+      "Bash(npm run electron-dev:*)",
+      "Bash(python manage.py runserver:*)",
+      "Bash(curl:*)",
+      "Bash(powershell -Command \"Stop-Process -Id 17132 -Force\")",
+      "Bash(netstat:*)"
+    ]
+  }
+}

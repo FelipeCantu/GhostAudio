@@ -25,7 +25,7 @@ export default function Home() {
         const fetchStats = async () => {
             if (isAuthenticated && token) {
                 try {
-                    const data = await api.library.getDashboardStats(token);
+                    const data = await api.library.getDashboardStats(token, user?.id);
                     setStats(data);
                 } catch (err) {
                     console.error("Failed to load stats", err);
@@ -33,7 +33,7 @@ export default function Home() {
             }
         };
         fetchStats();
-    }, [isAuthenticated, token]);
+    }, [isAuthenticated, token, user?.id]);
 
     if (isLoading) {
         return (
