@@ -16,8 +16,30 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DiZC",
-  description: "DiZC - Your standalone high-fidelity music experience.",
+  title: "DiZC - The Future of Local Audio",
+  description: "Experience bit-perfect playback, seamless CD ripping, and a stunning interface designed for audiophiles. Your music, uncompromised.",
+  openGraph: {
+    title: "DiZC - The Future of Local Audio",
+    description: "Experience bit-perfect playback and seamless CD ripping. Your music, uncompromised.",
+    url: "https://dizc.audio", // Placeholder standardizing on a domain
+    siteName: "DiZC",
+    images: [
+      {
+        url: "/og-image.jpg", // Placeholder for when they add one
+        width: 1200,
+        height: 630,
+        alt: "DiZC Music Player Interface",
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "DiZC - High Fidelity Music Player",
+    description: "Your local library, elevated. Bit-perfect audio and stunning design.",
+    images: ["/og-image.jpg"],
+  },
 };
 
 export default function RootLayout({

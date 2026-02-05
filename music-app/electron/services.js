@@ -321,15 +321,25 @@ const Services = {
     },
 
     getDashboardStats: async (token, mongoUserId) => {
+        const defaultStats = { total_albums: 0, total_tracks: 0, recent_albums: [] };
+
         // Use MongoDB endpoint for desktop app
         if (mongoUserId) {
             try {
-                const response = await fetch(`http://127.0.0.1:8000/api/mongo/stats/?user_id=${mongoUserId}`);
-                if (!response.ok) throw new Error('Failed to fetch stats from MongoDB');
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 5000);
+                const response = await fetch(`http://127.0.0.1:8000/api/mongo/stats/?user_id=${mongoUserId}`, {
+                    signal: controller.signal
+                });
+                clearTimeout(timeout);
+                if (!response.ok) {
+                    console.warn("[Electron] MongoDB stats returned", response.status, "- using defaults");
+                    return defaultStats;
+                }
                 return await response.json();
             } catch (e) {
-                console.error("[Electron] MongoDB Stats Fetch Failed:", e);
-                throw e;
+                console.warn("[Electron] MongoDB stats unavailable, using defaults");
+                return defaultStats;
             }
         }
 
@@ -340,11 +350,14 @@ const Services = {
                     'Authorization': `Bearer ${token}`
                 }
             });
-            if (!response.ok) throw new Error('Failed to fetch stats');
+            if (!response.ok) {
+                console.warn("[Electron] Dashboard stats returned", response.status, "- using defaults");
+                return defaultStats;
+            }
             return await response.json();
         } catch (e) {
-            console.error("[Electron] Stats Fetch Failed:", e);
-            throw e;
+            console.warn("[Electron] Dashboard stats unavailable, using defaults");
+            return defaultStats;
         }
     }
 };

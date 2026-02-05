@@ -35,6 +35,8 @@ export default function CDImporter() {
     const [currentTrack, setCurrentTrack] = useState(0);
     const [totalTracks, setTotalTracks] = useState(0);
     const [ripStartTime, setRipStartTime] = useState<number | null>(null);
+    // Per-track status: { status: 'pending'|'active'|'done', percent: 0-100 }
+    const [trackStatuses, setTrackStatuses] = useState<Record<string, { status: string; percent: number }>>({});
 
     const checkSystem = async () => {
         try {
@@ -167,6 +169,15 @@ export default function CDImporter() {
         setCurrentTrack(0);
         setRipStartTime(Date.now());
 
+        // Initialize all tracks as pending
+        const initialStatuses: Record<string, { status: string; percent: number }> = {};
+        if (metadata?.tracks) {
+            for (const t of metadata.tracks) {
+                initialStatuses[String(t.track_number)] = { status: 'pending', percent: 0 };
+            }
+        }
+        setTrackStatuses(initialStatuses);
+
         setStatus("ripping");
         setMessage(`Preparing to import ${trackCount} tracks...`);
 
@@ -179,6 +190,24 @@ export default function CDImporter() {
                     setCurrentTrack(data.current);
                     setTotalTracks(data.total);
                     setMessage(data.message);
+
+                    // Update per-track status
+                    if (data.track_number != null) {
+                        const key = String(data.track_number);
+                        if (data.stage === 'track_done') {
+                            setTrackStatuses(prev => ({ ...prev, [key]: { status: 'done', percent: 100 } }));
+                        } else if (data.stage === 'track_progress') {
+                            // track_progress = CD read progress, not extraction.
+                            // Keep as 'active' even at 100% — 'done' only after track_done (extraction complete).
+                            const pct = data.track_percent ?? 0;
+                            setTrackStatuses(prev => ({
+                                ...prev,
+                                [key]: { status: 'active', percent: Math.min(pct, 100) }
+                            }));
+                        } else {
+                            setTrackStatuses(prev => ({ ...prev, [key]: { status: 'active', percent: prev[key]?.percent ?? 0 } }));
+                        }
+                    }
                 } else if (data.type === 'saved') {
                     setMessage('Saved to library!');
                 }
@@ -201,6 +230,12 @@ export default function CDImporter() {
             if (data.status === "started" || data.status === "completed") {
                 setCurrentTrack(trackCount);
                 setMessage("Import completed. Finalizing library...");
+                // Mark all tracks as done
+                setTrackStatuses(prev => {
+                    const all: Record<string, { status: string; percent: number }> = {};
+                    for (const k of Object.keys(prev)) all[k] = { status: 'done', percent: 100 };
+                    return all;
+                });
                 setTimeout(() => {
                     setStatus("completed");
                     const albumName = metadata?.album || "Album";
@@ -208,6 +243,7 @@ export default function CDImporter() {
                     setMessage(`"${albumName}" by ${artistName} has been added to your library!`);
                     setCurrentTrack(0);
                     setTotalTracks(0);
+                    setTrackStatuses({});
                 }, 1500);
             } else {
                 throw new Error("Import failed");
@@ -222,6 +258,7 @@ export default function CDImporter() {
             setMessage(`Import failed: ${err.message || JSON.stringify(err)}`);
             setCurrentTrack(0);
             setTotalTracks(0);
+            setTrackStatuses({});
         }
     };
 
@@ -359,31 +396,77 @@ export default function CDImporter() {
                                                     <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-md">
                                                         {metadata.tracks?.length || '?'} Tracks
                                                     </span>
-                                                    <button
-                                                        onClick={startEditingMetadata}
-                                                        className="text-xs text-border hover:text-primary transition-colors p-1"
-                                                        title="Edit metadata"
-                                                    >
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                                        </svg>
-                                                    </button>
+                                                    {status !== 'ripping' && (
+                                                        <button
+                                                            onClick={startEditingMetadata}
+                                                            className="text-xs text-border hover:text-primary transition-colors p-1"
+                                                            title="Edit metadata"
+                                                        >
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                                            </svg>
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
 
-                                            <div className="max-h-32 overflow-y-auto pr-1 space-y-1 custom-scrollbar">
-                                                {metadata.tracks?.map((track: any) => (
-                                                    <div key={track.track_number} className="flex items-center text-xs text-zinc-500 py-1 border-b border-zinc-800/50 last:border-0">
-                                                        <span className="w-6 text-zinc-600 font-mono">{track.track_number}.</span>
-                                                        <span className="truncate flex-1">{track.title}</span>
-                                                        {track.duration_ms && (
-                                                            <span className="w-10 text-right font-mono text-zinc-600">
-                                                                {Math.floor(track.duration_ms / 60000)}:
-                                                                {String(Math.floor((track.duration_ms % 60000) / 1000)).padStart(2, '0')}
+                                            <div className={cn(
+                                                "overflow-y-auto pr-1 space-y-1 custom-scrollbar transition-all duration-300",
+                                                status === 'ripping' ? 'max-h-52' : 'max-h-32'
+                                            )}>
+                                                {metadata.tracks?.map((track: any) => {
+                                                    const tInfo = trackStatuses[String(track.track_number)];
+                                                    const tStatus = tInfo?.status;
+                                                    const tPercent = tInfo?.percent ?? 0;
+                                                    return (
+                                                        <div
+                                                            key={track.track_number}
+                                                            className={cn(
+                                                                "relative flex items-center text-xs py-1.5 border-b border-zinc-800/50 last:border-0 transition-colors duration-300 overflow-hidden",
+                                                                tStatus === 'done' ? 'text-green-400/90' :
+                                                                tStatus === 'active' ? 'text-primary' :
+                                                                'text-zinc-500'
+                                                            )}
+                                                        >
+                                                            {/* Per-track progress fill */}
+                                                            {tStatus && tStatus !== 'pending' && (
+                                                                <div
+                                                                    className={cn(
+                                                                        "absolute inset-y-0 left-0 transition-all duration-700 ease-out",
+                                                                        tStatus === 'done'
+                                                                            ? 'bg-green-500/10'
+                                                                            : 'bg-primary/10'
+                                                                    )}
+                                                                    style={{ width: `${tPercent}%` }}
+                                                                />
+                                                            )}
+                                                            {/* Status indicator */}
+                                                            <span className="relative w-6 flex items-center justify-center shrink-0">
+                                                                {tStatus === 'done' ? (
+                                                                    <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                                                                    </svg>
+                                                                ) : tStatus === 'active' ? (
+                                                                    <svg className="w-3.5 h-3.5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
+                                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                                                    </svg>
+                                                                ) : (
+                                                                    <span className="font-mono text-zinc-600">{track.track_number}.</span>
+                                                                )}
                                                             </span>
-                                                        )}
-                                                    </div>
-                                                ))}
+                                                            <span className="relative truncate flex-1">{track.title}</span>
+                                                            <span className="relative w-12 text-right font-mono text-zinc-600 shrink-0">
+                                                                {tStatus === 'active' && tPercent > 0 && tPercent < 100
+                                                                    ? `${tPercent}%`
+                                                                    : track.duration_ms
+                                                                        ? `${Math.floor(track.duration_ms / 60000)}:${String(Math.floor((track.duration_ms % 60000) / 1000)).padStart(2, '0')}`
+                                                                        : ''
+                                                                }
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         </motion.div>
                                     )}
