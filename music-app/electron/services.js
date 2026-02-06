@@ -174,6 +174,23 @@ const Services = {
         }
     },
 
+    // Cancel an active rip session
+    cancelRip: async (sessionId) => {
+        const url = 'http://127.0.0.1:8000/api/rip/cancel/';
+        const body = JSON.stringify({ session_id: sessionId });
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: body
+            });
+            return await response.json();
+        } catch (e) {
+            console.error('[Electron cancelRip] Error:', e);
+            return { error: e.message };
+        }
+    },
+
     // Rip CD - Proxies to Django Backend with streaming progress
     ripCD: async (args, eventSender) => {
         // args contains { drive_path, mongo_user_id, token, metadata }
@@ -203,6 +220,7 @@ const Services = {
             request.setHeader('Content-Type', 'application/json');
 
             let lastProgress = null;
+            let settled = false;  // Track whether promise has been resolved/rejected
 
             request.on('response', (response) => {
                 console.log(`[Electron ripCD] Response status: ${response.statusCode}`);
@@ -211,7 +229,10 @@ const Services = {
                     let errorData = '';
                     response.on('data', (chunk) => errorData += chunk);
                     response.on('end', () => {
-                        reject(new Error(`Server error: ${response.statusCode} - ${errorData}`));
+                        if (!settled) {
+                            settled = true;
+                            reject(new Error(`Server error: ${response.statusCode} - ${errorData}`));
+                        }
                     });
                     return;
                 }
@@ -233,9 +254,11 @@ const Services = {
 
                                 lastProgress = data;
 
-                                if (data.type === 'complete') {
+                                if (data.type === 'complete' && !settled) {
+                                    settled = true;
                                     resolve({ status: 'completed', tracks: data.tracks });
-                                } else if (data.type === 'error') {
+                                } else if (data.type === 'error' && !settled) {
+                                    settled = true;
                                     reject(new Error(data.message));
                                 }
                             } catch (parseErr) {
@@ -247,17 +270,24 @@ const Services = {
 
                 response.on('end', () => {
                     console.log('[Electron ripCD] Stream ended');
+                    if (settled) return;
+                    settled = true;
+                    // Only resolve as completed if we actually got a complete event
                     if (lastProgress?.type === 'complete') {
                         resolve({ status: 'completed', tracks: lastProgress.tracks });
-                    } else if (!lastProgress || lastProgress.type !== 'error') {
-                        resolve({ status: 'completed' });
+                    } else {
+                        // Stream ended without complete or error - treat as failure
+                        reject(new Error('Import stream ended unexpectedly without completion'));
                     }
                 });
             });
 
             request.on('error', (err) => {
                 console.error('[Electron ripCD] Request error:', err);
-                reject(err);
+                if (!settled) {
+                    settled = true;
+                    reject(err);
+                }
             });
 
             request.write(body);

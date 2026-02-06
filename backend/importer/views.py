@@ -8,6 +8,7 @@ import logging
 import os
 import queue
 import threading
+import uuid
 from datetime import datetime, timedelta
 from bson.objectid import ObjectId
 from pymongo import MongoClient
@@ -17,6 +18,10 @@ from .models import Album, Track
 from .serializers import AlbumSerializer, UserSerializer
 
 logger = logging.getLogger(__name__)
+
+# Active rip session registry for cancellation support
+_active_rips = {}   # session_id -> CDRipper instance
+_rips_lock = threading.Lock()
 
 # --- Auth Views ---
 
@@ -253,22 +258,37 @@ def rip_cd_stream(request):
     metadata = data.get('metadata')
     mongo_user_id = data.get('mongo_user_id')
 
+    # Generate a unique session ID for cancellation support
+    session_id = str(uuid.uuid4())
+
     def generate_progress():
         progress_queue = queue.Queue()
         result_holder = {'tracks': None, 'error': None}
+        ripper = CDRipper(get_library_path())
 
-        def progress_callback(stage, current, total, message):
-            progress_queue.put({
+        # Register this ripper so it can be cancelled
+        with _rips_lock:
+            _active_rips[session_id] = ripper
+
+        # Send session ID as first event
+        yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
+
+        def progress_callback(stage, current, total, message, track_number=None, track_percent=None):
+            event = {
                 'type': 'progress',
                 'stage': stage,
                 'current': current,
                 'total': total,
                 'message': message
-            })
+            }
+            if track_number is not None:
+                event['track_number'] = track_number
+            if track_percent is not None:
+                event['track_percent'] = track_percent
+            progress_queue.put(event)
 
         def do_rip():
             try:
-                ripper = CDRipper(get_library_path())
                 result_holder['tracks'] = ripper.rip_cd(drive, metadata=metadata, progress_callback=progress_callback)
             except Exception as e:
                 result_holder['error'] = str(e)
@@ -280,75 +300,134 @@ def rip_cd_stream(request):
         rip_thread = threading.Thread(target=do_rip)
         rip_thread.start()
 
-        # Yield progress updates as they come
-        while True:
-            try:
-                update = progress_queue.get(timeout=120)  # 2 min timeout per update
-                if update is None:
-                    break
-                yield f"data: {json.dumps(update)}\n\n"
-            except queue.Empty:
-                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+        try:
+            # Yield progress updates as they come
+            while True:
+                try:
+                    update = progress_queue.get(timeout=120)  # 2 min timeout per update
+                    if update is None:
+                        break
+                    yield f"data: {json.dumps(update)}\n\n"
+                except queue.Empty:
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
 
-        rip_thread.join()
+            rip_thread.join()
 
-        # After rip complete, save to MongoDB
-        if result_holder['tracks'] and mongo_user_id and settings.MONGODB_URI:
-            try:
-                client = MongoClient(settings.MONGODB_URI)
-                db = client.get_database()
-                albums_collection = db['albums']
+            # After rip complete, save to MongoDB
+            if result_holder['tracks'] and mongo_user_id and settings.MONGODB_URI:
+                try:
+                    client = MongoClient(settings.MONGODB_URI)
+                    db = client.get_database()
+                    albums_collection = db['albums']
 
-                safe_metadata = metadata or {}
-                artist_name = safe_metadata.get('artist', 'Unknown Artist')
-                album_title = safe_metadata.get('album', 'Unknown Album')
+                    safe_metadata = metadata or {}
+                    artist_name = safe_metadata.get('artist', 'Unknown Artist')
+                    album_title = safe_metadata.get('album', 'Unknown Album')
 
-                mongo_tracks = []
-                for idx, path in enumerate(result_holder['tracks']):
-                    track_num = idx + 1
-                    track_title = f"Track {track_num}"
-                    duration_str = "00:00"
+                    # Build a lookup from track number -> metadata for reliable matching
+                    meta_lookup = {}
+                    if metadata and 'tracks' in metadata:
+                        for t in metadata['tracks']:
+                            try:
+                                meta_lookup[int(t['track_number'])] = t
+                            except (ValueError, KeyError):
+                                pass
 
-                    if metadata and 'tracks' in metadata and idx < len(metadata['tracks']):
-                        track_info = metadata['tracks'][idx]
-                        track_title = track_info.get('title', track_title)
-                        duration_ms = track_info.get('duration_ms', 0)
-                        if duration_ms:
-                            seconds = int(duration_ms) // 1000
-                            m, s = divmod(seconds, 60)
-                            duration_str = f"{m:02d}:{s:02d}"
+                    mongo_tracks = []
+                    for path in result_holder['tracks']:
+                        # Extract track number from filename (e.g. "03 - Title.wav" -> 3)
+                        basename = os.path.basename(path)
+                        try:
+                            track_num = int(basename.split(' - ', 1)[0])
+                        except (ValueError, IndexError):
+                            track_num = len(mongo_tracks) + 1
 
-                    mongo_tracks.append({
-                        'title': track_title,
-                        'trackNumber': track_num,
-                        'audioFile': str(path),
-                        'duration': duration_str
-                    })
+                        track_title = f"Track {track_num}"
+                        duration_str = "00:00"
 
-                new_album = {
-                    'user': ObjectId(mongo_user_id),
-                    'title': album_title,
-                    'artist': artist_name,
-                    'coverArt': safe_metadata.get('cover_art', ''),
-                    'tracks': mongo_tracks,
-                    'createdAt': datetime.now()
-                }
+                        if track_num in meta_lookup:
+                            track_info = meta_lookup[track_num]
+                            track_title = track_info.get('title', track_title)
+                            duration_ms = track_info.get('duration_ms', 0)
+                            if duration_ms:
+                                seconds = int(duration_ms) // 1000
+                                m, s = divmod(seconds, 60)
+                                duration_str = f"{m:02d}:{s:02d}"
 
-                albums_collection.insert_one(new_album)
-                yield f"data: {json.dumps({'type': 'saved', 'message': 'Saved to library'})}\n\n"
-            except Exception as e:
-                logger.error(f"MongoDB save failed: {e}")
+                        mongo_tracks.append({
+                            'title': track_title,
+                            'trackNumber': track_num,
+                            'audioFile': str(path),
+                            'duration': duration_str
+                        })
 
-        # Final status
-        if result_holder['error']:
-            yield f"data: {json.dumps({'type': 'error', 'message': result_holder['error']})}\n\n"
-        else:
-            yield f"data: {json.dumps({'type': 'complete', 'tracks': len(result_holder['tracks'] or [])})}\n\n"
+                    new_album = {
+                        'user': ObjectId(mongo_user_id),
+                        'title': album_title,
+                        'artist': artist_name,
+                        'coverArt': safe_metadata.get('cover_art', ''),
+                        'tracks': mongo_tracks,
+                        'createdAt': datetime.now()
+                    }
+
+                    albums_collection.insert_one(new_album)
+                    yield f"data: {json.dumps({'type': 'saved', 'message': 'Saved to library'})}\n\n"
+                except Exception as e:
+                    logger.error(f"MongoDB save failed: {e}")
+                    yield f"data: {json.dumps({'type': 'warning', 'message': f'Library save failed: {e}. Files were ripped successfully.'})}\n\n"
+
+            # Final status
+            if result_holder['error']:
+                yield f"data: {json.dumps({'type': 'error', 'message': result_holder['error']})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'complete', 'tracks': len(result_holder['tracks'] or [])})}\n\n"
+        finally:
+            # Clean up session registry
+            with _rips_lock:
+                _active_rips.pop(session_id, None)
 
     response = StreamingHttpResponse(generate_progress(), content_type='text/event-stream')
     response['Cache-Control'] = 'no-cache'
     response['X-Accel-Buffering'] = 'no'
     return response
+
+
+@csrf_exempt
+def cancel_rip(request):
+    """Cancel an active rip session by session_id."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    session_id = data.get('session_id')
+    if not session_id:
+        return JsonResponse({'error': 'session_id required'}, status=400)
+
+    with _rips_lock:
+        if session_id == '__all__':
+            # Cancel all active rips (used during app shutdown)
+            for sid, ripper in list(_active_rips.items()):
+                try:
+                    ripper.cancel()
+                except Exception as e:
+                    logger.warning(f"Error cancelling session {sid}: {e}")
+            return JsonResponse({'status': 'cancelled', 'sessions': len(_active_rips)})
+
+        ripper = _active_rips.get(session_id)
+
+    if not ripper:
+        return JsonResponse({'error': 'Session not found or already finished'}, status=404)
+
+    try:
+        ripper.cancel()
+        return JsonResponse({'status': 'cancelled', 'session_id': session_id})
+    except Exception as e:
+        logger.error(f"Error cancelling rip {session_id}: {e}")
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 # --- MongoDB Direct Endpoints (for Desktop App) ---
@@ -466,10 +545,10 @@ def mongo_stats(request):
         return Response({'error': 'user_id required'}, status=400)
 
     if not settings.MONGODB_URI:
-        return Response({'error': 'MongoDB not configured'}, status=500)
+        return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})
 
     try:
-        client = MongoClient(settings.MONGODB_URI)
+        client = MongoClient(settings.MONGODB_URI, serverSelectionTimeoutMS=3000)
         db = client.get_database()
         albums_collection = db['albums']
 
@@ -497,5 +576,5 @@ def mongo_stats(request):
             'recent_albums': recent_albums
         })
     except Exception as e:
-        logger.error(f"MongoDB stats fetch failed: {e}")
-        return Response({'error': str(e)}, status=500)
+        logger.warning(f"MongoDB stats unavailable: {e}")
+        return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})

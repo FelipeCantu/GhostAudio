@@ -22,6 +22,7 @@ urlpatterns = [
     path('metadata/', views.get_cd_metadata, name='get_cd_metadata'),
     path('rip/', views.rip_cd, name='rip_cd'),
     path('rip/stream/', views.rip_cd_stream, name='rip_cd_stream'),
+    path('rip/cancel/', views.cancel_rip, name='cancel_rip'),
 
     # Dashboard API
     path('dashboard/stats/', views.dashboard_stats, name='dashboard_stats'),

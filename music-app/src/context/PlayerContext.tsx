@@ -21,6 +21,10 @@ interface PlayerContextType {
     progress: number;
     duration: number;
     seek: (time: number) => void;
+    volume: number;
+    setVolume: (v: number) => void;
+    isLoading: boolean;
+    error: string | null;
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -32,6 +36,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const [isPlaying, setIsPlaying] = useState(false);
     const [progress, setProgress] = useState(0);
     const [duration, setDuration] = useState(0);
+    const [volume, setVolumeState] = useState(1);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     // We use a ref for the audio element to manage it imperatively
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -71,8 +78,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const handleError = (e: Event) => {
             const audioEl = e.target as HTMLAudioElement;
-            console.error("[Player] Audio error:", audioEl.error?.message, "Code:", audioEl.error?.code);
+            const msg = audioEl.error?.message || `Audio error (code ${audioEl.error?.code})`;
+            console.error("[Player] Audio error:", msg);
             console.error("[Player] Failed src:", audioEl.src);
+            setError(msg);
+            setIsLoading(false);
+        };
+        const handleWaiting = () => setIsLoading(true);
+        const handlePlaying = () => {
+            setIsLoading(false);
+            setError(null);
         };
 
         audio.addEventListener("timeupdate", handleTimeUpdate);
@@ -81,6 +96,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         audio.addEventListener("canplay", handleCanPlay);
         audio.addEventListener("ended", handleEnded);
         audio.addEventListener("error", handleError);
+        audio.addEventListener("waiting", handleWaiting);
+        audio.addEventListener("playing", handlePlaying);
 
         return () => {
             audio.pause();
@@ -90,8 +107,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             audio.removeEventListener("canplay", handleCanPlay);
             audio.removeEventListener("ended", handleEnded);
             audio.removeEventListener("error", handleError);
+            audio.removeEventListener("waiting", handleWaiting);
+            audio.removeEventListener("playing", handlePlaying);
         };
     }, []);
+
+    const setVolume = (v: number) => {
+        const clamped = Math.max(0, Math.min(1, v));
+        setVolumeState(clamped);
+        if (audioRef.current) {
+            audioRef.current.volume = clamped;
+        }
+    };
 
     const playTrack = (track: Track, newQueue?: Track[], albumInfo?: AlbumInfo) => {
         console.log("[Player] playTrack called with:", track);
@@ -114,6 +141,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         setCurrentTrack(track);
         setIsPlaying(true);
+        setIsLoading(true);
+        setError(null);
         // Reset progress and duration for new track
         setProgress(0);
         setDuration(0);
@@ -128,6 +157,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             }
             console.log("[Player] Playing src:", src);
 
+            audioRef.current.volume = volume;
             audioRef.current.src = src;
             audioRef.current.play().catch(e => console.error("[Player] Playback failed:", e));
         }
@@ -191,7 +221,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             prevTrack,
             progress,
             duration,
-            seek
+            seek,
+            volume,
+            setVolume,
+            isLoading,
+            error
         }}>
             {children}
         </PlayerContext.Provider>

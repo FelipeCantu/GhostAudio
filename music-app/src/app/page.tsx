@@ -6,6 +6,7 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import { HeroVisual } from "@/components/landing/HeroVisual";
 import { ProductShowcase } from "@/components/landing/ProductShowcase";
+import { HowItWorks } from "@/components/landing/HowItWorks";
 import { BentoGrid } from "@/components/landing/BentoGrid";
 import { Github, Twitter } from "lucide-react";
 
@@ -58,7 +59,7 @@ export default function LandingPage() {
               DiZC is the ultimate high-fidelity music player for your local collection.
               Experience bit-perfect playback, seamless CD ripping, and a stunning interface designed for audiophiles.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-20">
+            <div id="download" className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-20 scroll-mt-24">
               <a href="/downloads/DiZC-Setup.exe" download className="px-8 py-4 bg-white text-[#0d3b66] font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-gray-100 transition-transform hover:scale-105 shadow-xl shadow-white/10">
                 <Download size={20} />
                 Download for Windows
@@ -76,6 +77,9 @@ export default function LandingPage() {
           <ProductShowcase />
         </div>
       </section>
+
+      {/* How It Works */}
+      <HowItWorks />
 
       {/* Social Proof Banner */}
       <section className="py-10 border-y border-white/5 bg-black/10 relative z-10 backdrop-blur-sm">

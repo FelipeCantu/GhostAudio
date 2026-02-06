@@ -200,6 +200,12 @@ export const api = {
             }
             throw new Error("CD Import is only available in the Desktop App.");
         },
+        cancelRip: async (sessionId: string) => {
+            if (isElectron()) {
+                return await (window as any).electronAPI.invoke('cancel-rip', { session_id: sessionId });
+            }
+            throw new Error("CD Import is only available in the Desktop App.");
+        },
         getCdMetadata: async (drivePath: string) => {
             if (isElectron()) {
                 return await (window as any).electronAPI.invoke('get-cd-metadata', { drive_path: drivePath });

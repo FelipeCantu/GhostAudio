@@ -1,14 +1,21 @@
 "use client";
 
+import { usePathname } from "next/navigation";
+
 import { usePlayer } from "@/context/PlayerContext";
-import { Play, Pause, SkipBack, SkipForward, Disc } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Disc, Volume2, VolumeX, Loader2 } from "lucide-react";
 import Image from "next/image";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function PlayerBar() {
-    const { currentTrack, currentAlbum, isPlaying, togglePlay, nextTrack, prevTrack, progress, duration, seek } = usePlayer();
+    const { currentTrack, currentAlbum, isPlaying, togglePlay, nextTrack, prevTrack, progress, duration, seek, volume, setVolume, isLoading, error } = usePlayer();
+    const [isMuted, setIsMuted] = useState(false);
+    const [prevVolume, setPrevVolume] = useState(1);
+    const pathname = usePathname();
 
-    if (!currentTrack) return null;
+    // Hide player on landing page or if no track is playing
+    if (!currentTrack || pathname === "/") return null;
 
     const formatTime = (seconds: number) => {
         if (!seconds || !isFinite(seconds) || isNaN(seconds)) return "0:00";
@@ -19,6 +26,17 @@ export default function PlayerBar() {
 
     // Get track duration from metadata if audio duration not available
     const displayDuration = duration && isFinite(duration) ? duration : 0;
+
+    const toggleMute = () => {
+        if (isMuted) {
+            setVolume(prevVolume);
+            setIsMuted(false);
+        } else {
+            setPrevVolume(volume);
+            setVolume(0);
+            setIsMuted(true);
+        }
+    };
 
     return (
         <AnimatePresence>
@@ -48,6 +66,9 @@ export default function PlayerBar() {
                         <p className="text-xs text-zinc-400 truncate">
                             {currentAlbum?.artist || `Track ${currentTrack.track_number}`}
                         </p>
+                        {error && (
+                            <p className="text-xs text-red-400 truncate mt-0.5">{error}</p>
+                        )}
                     </div>
                 </div>
 
@@ -61,7 +82,13 @@ export default function PlayerBar() {
                             onClick={togglePlay}
                             className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform"
                         >
-                            {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
+                            {isLoading ? (
+                                <Loader2 size={20} className="animate-spin" />
+                            ) : isPlaying ? (
+                                <Pause size={20} fill="currentColor" />
+                            ) : (
+                                <Play size={20} fill="currentColor" className="ml-0.5" />
+                            )}
                         </button>
                         <button onClick={nextTrack} className="text-zinc-400 hover:text-white transition-colors">
                             <SkipForward size={20} />
@@ -101,9 +128,24 @@ export default function PlayerBar() {
                     </div>
                 </div>
 
-                {/* Volume / Extra (Placeholder for now) */}
-                <div className="w-1/4 flex justify-end">
-                    {/* Volume slider could go here */}
+                {/* Volume Controls */}
+                <div className="w-1/4 flex justify-end items-center gap-2">
+                    <button onClick={toggleMute} className="text-zinc-400 hover:text-white transition-colors">
+                        {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                    </button>
+                    <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={isMuted ? 0 : volume}
+                        onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            setVolume(v);
+                            if (v > 0) setIsMuted(false);
+                        }}
+                        className="w-24 h-1 accent-[#f4d35e] bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
+                    />
                 </div>
             </motion.div>
         </AnimatePresence>

@@ -252,6 +252,17 @@ ipcMain.handle('get-cd-metadata', async (event, args) => {
   return await services.getCdMetadata(args);
 });
 
+ipcMain.handle('cancel-rip', async (event, args) => {
+  try {
+    const sessionId = args?.session_id || '__all__';
+    console.log('[IPC cancel-rip] Cancelling session:', sessionId);
+    return await services.cancelRip(sessionId);
+  } catch (err) {
+    console.error('[IPC cancel-rip] Error:', err);
+    return { error: err.message };
+  }
+});
+
 const dbConnect = require('./db');
 const User = require('./models/User');
 const bcrypt = require('bcryptjs');
@@ -431,8 +442,14 @@ ipcMain.handle('import-local-files', async (event, args) => {
 
 
 
-app.on('window-all-closed', function () {
+app.on('window-all-closed', async function () {
   if (process.platform !== 'darwin') {
+    // Best-effort cancel all active rip sessions before shutdown
+    try {
+      await services.cancelRip('__all__');
+    } catch (e) {
+      console.warn('[Shutdown] Failed to cancel active rips:', e);
+    }
     // Kill backend
     if (backendProcess) {
       backendProcess.kill();

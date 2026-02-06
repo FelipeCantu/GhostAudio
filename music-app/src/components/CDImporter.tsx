@@ -34,9 +34,13 @@ export default function CDImporter() {
     // Progress tracking
     const [currentTrack, setCurrentTrack] = useState(0);
     const [totalTracks, setTotalTracks] = useState(0);
+    const [overallPercent, setOverallPercent] = useState(0);
     const [ripStartTime, setRipStartTime] = useState<number | null>(null);
     // Per-track status: { status: 'pending'|'active'|'done', percent: 0-100 }
     const [trackStatuses, setTrackStatuses] = useState<Record<string, { status: string; percent: number }>>({});
+    // Cancel support
+    const [ripSessionId, setRipSessionId] = useState<string | null>(null);
+    const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
     const checkSystem = async () => {
         try {
@@ -155,6 +159,32 @@ export default function CDImporter() {
     };
 
 
+    // Clean up listeners on unmount
+    useEffect(() => {
+        return () => {
+            if (api.isElectron() && (window as any).electronAPI?.removeAllListeners) {
+                (window as any).electronAPI.removeAllListeners('rip-progress');
+            }
+        };
+    }, []);
+
+    const cancelRip = async () => {
+        if (!ripSessionId) return;
+        try {
+            await api.system.cancelRip(ripSessionId);
+            setStatus("idle");
+            setMessage("Import cancelled.");
+            setRipSessionId(null);
+            setCurrentTrack(0);
+            setTotalTracks(0);
+            setOverallPercent(0);
+            setTrackStatuses({});
+        } catch (err: any) {
+            console.error("Cancel error:", err);
+            setMessage(`Cancel failed: ${err.message}`);
+        }
+    };
+
     const startRip = async () => {
         if (!selectedDrive) return;
 
@@ -167,7 +197,10 @@ export default function CDImporter() {
         const trackCount = metadata?.tracks?.length || 12;
         setTotalTracks(trackCount);
         setCurrentTrack(0);
+        setOverallPercent(0);
         setRipStartTime(Date.now());
+        setRipSessionId(null);
+        setWarningMessage(null);
 
         // Initialize all tracks as pending
         const initialStatuses: Record<string, { status: string; percent: number }> = {};
@@ -181,15 +214,38 @@ export default function CDImporter() {
         setStatus("ripping");
         setMessage(`Preparing to import ${trackCount} tracks...`);
 
+        // Remove old listeners before registering new ones (prevent leak)
+        if (api.isElectron() && (window as any).electronAPI?.removeAllListeners) {
+            (window as any).electronAPI.removeAllListeners('rip-progress');
+        }
+
         // Listen for real-time progress updates from Electron
         if (api.isElectron() && (window as any).electronAPI?.on) {
             (window as any).electronAPI.on('rip-progress', (data: any) => {
                 console.log('[CDImporter] Progress update:', data);
 
-                if (data.type === 'progress') {
-                    setCurrentTrack(data.current);
-                    setTotalTracks(data.total);
+                if (data.type === 'session') {
+                    setRipSessionId(data.session_id);
+                } else if (data.type === 'progress') {
                     setMessage(data.message);
+
+                    if (data.stage === 'cancelled') {
+                        setStatus("idle");
+                        setMessage("Import cancelled.");
+                        setRipSessionId(null);
+                        return;
+                    }
+
+                    // During "reading" stage, current/total are percent (0-100/100).
+                    // During "extracting"/"track_done" stages, they are track counts.
+                    if (data.stage === 'reading' || data.stage === 'track_progress') {
+                        setOverallPercent(data.current);
+                    } else if (data.stage === 'extracting' || data.stage === 'track_done' || data.stage === 'processing') {
+                        // Extraction phase: progress is 100% read + extraction progress
+                        setOverallPercent(100);
+                        setCurrentTrack(data.current);
+                        setTotalTracks(data.total);
+                    }
 
                     // Update per-track status
                     if (data.track_number != null) {
@@ -197,8 +253,6 @@ export default function CDImporter() {
                         if (data.stage === 'track_done') {
                             setTrackStatuses(prev => ({ ...prev, [key]: { status: 'done', percent: 100 } }));
                         } else if (data.stage === 'track_progress') {
-                            // track_progress = CD read progress, not extraction.
-                            // Keep as 'active' even at 100% — 'done' only after track_done (extraction complete).
                             const pct = data.track_percent ?? 0;
                             setTrackStatuses(prev => ({
                                 ...prev,
@@ -210,6 +264,8 @@ export default function CDImporter() {
                     }
                 } else if (data.type === 'saved') {
                     setMessage('Saved to library!');
+                } else if (data.type === 'warning') {
+                    setWarningMessage(data.message);
                 }
             });
         }
@@ -243,7 +299,9 @@ export default function CDImporter() {
                     setMessage(`"${albumName}" by ${artistName} has been added to your library!`);
                     setCurrentTrack(0);
                     setTotalTracks(0);
+                    setOverallPercent(0);
                     setTrackStatuses({});
+                    setRipSessionId(null);
                 }, 1500);
             } else {
                 throw new Error("Import failed");
@@ -258,7 +316,9 @@ export default function CDImporter() {
             setMessage(`Import failed: ${err.message || JSON.stringify(err)}`);
             setCurrentTrack(0);
             setTotalTracks(0);
+            setOverallPercent(0);
             setTrackStatuses({});
+            setRipSessionId(null);
         }
     };
 
@@ -578,16 +638,25 @@ export default function CDImporter() {
                                                         <div className="flex justify-between text-xs text-zinc-400 mb-1">
                                                             <span>Progress</span>
                                                             <span>
-                                                                {totalTracks === 100
-                                                                    ? `${currentTrack}%`
-                                                                    : `${currentTrack} / ${totalTracks} tracks`
+                                                                {overallPercent < 100
+                                                                    ? `Reading CD: ${overallPercent}%`
+                                                                    : totalTracks > 0
+                                                                        ? `Extracting: ${currentTrack} / ${totalTracks}`
+                                                                        : 'Processing...'
                                                                 }
                                                             </span>
                                                         </div>
                                                         <div className="w-full bg-zinc-700 rounded-full h-2 overflow-hidden">
                                                             <div
                                                                 className="bg-gradient-to-r from-primary to-border h-full rounded-full transition-all duration-300 ease-out"
-                                                                style={{ width: `${(currentTrack / totalTracks) * 100}%` }}
+                                                                style={{
+                                                                    width: `${overallPercent < 100
+                                                                        ? overallPercent
+                                                                        : totalTracks > 0
+                                                                            ? (currentTrack / totalTracks) * 100
+                                                                            : 100
+                                                                    }%`
+                                                                }}
                                                             />
                                                         </div>
                                                     </div>
@@ -610,28 +679,49 @@ export default function CDImporter() {
                             )}
                         </AnimatePresence>
 
+                        {/* Warning message */}
+                        {warningMessage && (
+                            <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 p-3 text-xs text-yellow-200">
+                                {warningMessage}
+                            </div>
+                        )}
+
                         {/* Main Action Button */}
-                        <motion.button
-                            whileHover={!(!selectedDrive || status === "ripping" || status === "scanning") ? { scale: 1.02 } : {}}
-                            whileTap={!(!selectedDrive || status === "ripping" || status === "scanning") ? { scale: 0.98 } : {}}
-                            onClick={startRip}
-                            disabled={!selectedDrive || status === "ripping" || status === "scanning"}
-                            className={cn(
-                                "w-full py-4 px-6 rounded-xl font-bold shadow-lg shadow-black/20 transition-all flex items-center justify-center gap-2.5",
-                                status === "ripping"
-                                    ? "bg-zinc-800 text-zinc-400 cursor-not-allowed border border-zinc-700"
-                                    : selectedDrive
-                                        ? "bg-gradient-to-r from-primary to-border text-primary-foreground hover:shadow-primary/25 border border-transparent"
-                                        : "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700"
-                            )}
-                        >
-                            <span>{status === "ripping" ? "Importing Tracks..." : "Start Import"}</span>
-                            {status !== "ripping" && (
-                                <svg className={cn("w-5 h-5", selectedDrive ? "text-white/80" : "text-zinc-600")} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                        {status === "ripping" && ripSessionId ? (
+                            <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={cancelRip}
+                                className="w-full py-4 px-6 rounded-xl font-bold shadow-lg shadow-black/20 transition-all flex items-center justify-center gap-2.5 bg-red-600/80 hover:bg-red-600 text-white border border-red-500/50"
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                 </svg>
-                            )}
-                        </motion.button>
+                                <span>Cancel Import</span>
+                            </motion.button>
+                        ) : (
+                            <motion.button
+                                whileHover={!(!selectedDrive || status === "ripping" || status === "scanning") ? { scale: 1.02 } : {}}
+                                whileTap={!(!selectedDrive || status === "ripping" || status === "scanning") ? { scale: 0.98 } : {}}
+                                onClick={startRip}
+                                disabled={!selectedDrive || status === "ripping" || status === "scanning"}
+                                className={cn(
+                                    "w-full py-4 px-6 rounded-xl font-bold shadow-lg shadow-black/20 transition-all flex items-center justify-center gap-2.5",
+                                    status === "ripping"
+                                        ? "bg-zinc-800 text-zinc-400 cursor-not-allowed border border-zinc-700"
+                                        : selectedDrive
+                                            ? "bg-gradient-to-r from-primary to-border text-primary-foreground hover:shadow-primary/25 border border-transparent"
+                                            : "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700"
+                                )}
+                            >
+                                <span>{status === "ripping" ? "Importing Tracks..." : "Start Import"}</span>
+                                {status !== "ripping" && (
+                                    <svg className={cn("w-5 h-5", selectedDrive ? "text-white/80" : "text-zinc-600")} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                    </svg>
+                                )}
+                            </motion.button>
+                        )}
                     </div>
                 </div>
             </div>

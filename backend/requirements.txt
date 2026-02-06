@@ -12,6 +12,7 @@ pillow
 musicbrainzngs
 # Bridge
 pymongo
+dnspython
 python-dotenv
 # Build & Serve
 pyinstaller
