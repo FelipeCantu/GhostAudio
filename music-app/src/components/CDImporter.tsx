@@ -1,6 +1,6 @@
+"use client";
 
 import { useState, useEffect } from "react";
-
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -10,14 +10,28 @@ function cn(...inputs: (string | undefined | null | false)[]) {
 }
 
 import { useAuth } from "@/context/AuthContext";
+import { useImport } from "@/context/ImportContext";
 import { api } from "@/services/api";
 
 export default function CDImporter() {
-    const { user, token, isAuthenticated } = useAuth();
+    const { user, token } = useAuth();
+    const {
+        importStatus,
+        message: contextMessage,
+        warningMessage,
+        overallPercent,
+        currentTrack,
+        totalTracks,
+        trackStatuses,
+        ripSessionId,
+        startImport,
+        cancelImport,
+    } = useImport();
+
     const [drives, setDrives] = useState<string[]>([]);
     const [selectedDrive, setSelectedDrive] = useState<string | null>(null);
-    const [status, setStatus] = useState<"idle" | "scanning" | "ripping" | "completed" | "error">("idle");
-    const [message, setMessage] = useState("");
+    const [isScanning, setIsScanning] = useState(false);
+    const [localMessage, setLocalMessage] = useState("");
     const [ffmpegMissing, setFfmpegMissing] = useState(false);
 
     // Check if we are in Electron environment
@@ -31,24 +45,19 @@ export default function CDImporter() {
     const [isEditingMetadata, setIsEditingMetadata] = useState(false);
     const [editedMetadata, setEditedMetadata] = useState<any>(null);
 
-    // Progress tracking
-    const [currentTrack, setCurrentTrack] = useState(0);
-    const [totalTracks, setTotalTracks] = useState(0);
-    const [overallPercent, setOverallPercent] = useState(0);
-    const [ripStartTime, setRipStartTime] = useState<number | null>(null);
-    // Per-track status: { status: 'pending'|'active'|'done', percent: 0-100 }
-    const [trackStatuses, setTrackStatuses] = useState<Record<string, { status: string; percent: number }>>({});
-    // Cancel support
-    const [ripSessionId, setRipSessionId] = useState<string | null>(null);
-    const [warningMessage, setWarningMessage] = useState<string | null>(null);
+    // Derive combined status and message for the UI.
+    // Import state from context wins when an import is active; local scan/idle
+    // state is used otherwise so drive-scanning feedback still shows.
+    const status = importStatus !== 'idle' ? importStatus : (isScanning ? 'scanning' : 'idle');
+    const message = importStatus !== 'idle' ? contextMessage : localMessage;
 
     const checkSystem = async () => {
         try {
             const sys = await api.system.getSystemStatus();
-            console.log("System Status Object:", sys); // Log full object to see Connection Errors
+            console.log("System Status Object:", sys);
             if (!sys.ffmpeg_found) {
                 setFfmpegMissing(true);
-                if (sys.error) setMessage(`Error: ${sys.error}`);
+                if (sys.error) setLocalMessage(`Error: ${sys.error}`);
             } else {
                 setFfmpegMissing(false);
             }
@@ -59,8 +68,8 @@ export default function CDImporter() {
 
     const scanDrives = async () => {
         console.log("Starting Drive Scan...");
-        setStatus("scanning");
-        setMessage("Scanning for devices...");
+        setIsScanning(true);
+        setLocalMessage("Scanning for devices...");
         setMetadata(null);
 
         try {
@@ -70,16 +79,16 @@ export default function CDImporter() {
             if (data.drives && data.drives.length > 0) {
                 console.log("Selecting First Drive:", data.drives[0]);
                 setSelectedDrive(data.drives[0]);
-                setMessage(`Found ${data.drives.length} drive(s).`);
+                setLocalMessage(`Found ${data.drives.length} drive(s).`);
             } else {
                 console.log("No Drives Found");
-                setMessage("No optical drives found.");
+                setLocalMessage("No optical drives found.");
             }
-            setStatus("idle");
         } catch (err: any) {
             console.error("Scan Error:", err);
-            setStatus("error");
-            setMessage(err.message || "Failed to access hardware.");
+            setLocalMessage(err.message || "Failed to access hardware.");
+        } finally {
+            setIsScanning(false);
         }
     };
 
@@ -99,40 +108,35 @@ export default function CDImporter() {
 
     const fetchMetadata = async (drive: string) => {
         console.log(`Fetching Metadata for drive: ${drive}`);
-        setMessage("Reading Disc...");
+        setLocalMessage("Reading Disc...");
         setIsEditingMetadata(false);
         try {
             const meta = await api.system.getCdMetadata(drive);
             console.log("Metadata Result:", meta);
 
-            // Check if we have track data even if there's an error (fallback metadata)
             if (meta && meta.tracks && meta.tracks.length > 0) {
                 setMetadata(meta);
-                setEditedMetadata(null); // Reset edited metadata
+                setEditedMetadata(null);
                 if (meta.error) {
-                    // Has tracks but metadata lookup failed
-                    setMessage(`Audio CD detected (${meta.tracks.length} tracks). Metadata lookup failed - you can still import with basic track names.`);
+                    setLocalMessage(`Audio CD detected (${meta.tracks.length} tracks). Metadata lookup failed - you can still import with basic track names.`);
                 } else {
-                    // Full metadata available
-                    setMessage(`Ready to import: ${meta.album} by ${meta.artist}`);
+                    setLocalMessage(`Ready to import: ${meta.album} by ${meta.artist}`);
                 }
             } else if (meta && meta.error) {
-                // Error and no track data
                 setMetadata(null);
-                setMessage(`Audio CD detected. Error: ${meta.error}`);
+                setLocalMessage(`Audio CD detected. Error: ${meta.error}`);
             } else {
                 setMetadata(null);
-                setMessage(`Audio CD detected. Metadata lookup failed (Unknown).`);
+                setLocalMessage(`Audio CD detected. Metadata lookup failed (Unknown).`);
             }
         } catch (e: any) {
             console.warn("Metadata fetch failed", e);
             setMetadata(null);
-            setMessage(`Audio CD detected. Lookup failed: ${e.message || e}`);
+            setLocalMessage(`Audio CD detected. Lookup failed: ${e.message || e}`);
         }
     };
 
     const startEditingMetadata = () => {
-        // Initialize edited metadata with current values
         setEditedMetadata(JSON.parse(JSON.stringify(metadata)));
         setIsEditingMetadata(true);
     };
@@ -140,7 +144,7 @@ export default function CDImporter() {
     const saveMetadataEdits = () => {
         setMetadata(editedMetadata);
         setIsEditingMetadata(false);
-        setMessage(`Ready to import: ${editedMetadata.album} by ${editedMetadata.artist}`);
+        setLocalMessage(`Ready to import: ${editedMetadata.album} by ${editedMetadata.artist}`);
     };
 
     const cancelMetadataEdits = () => {
@@ -158,168 +162,19 @@ export default function CDImporter() {
         setEditedMetadata({ ...editedMetadata, tracks: updatedTracks });
     };
 
-
-    // Clean up listeners on unmount
-    useEffect(() => {
-        return () => {
-            if (api.isElectron() && (window as any).electronAPI?.removeAllListeners) {
-                (window as any).electronAPI.removeAllListeners('rip-progress');
-            }
-        };
-    }, []);
-
-    const cancelRip = async () => {
-        if (!ripSessionId) return;
-        try {
-            await api.system.cancelRip(ripSessionId);
-            setStatus("idle");
-            setMessage("Import cancelled.");
-            setRipSessionId(null);
-            setCurrentTrack(0);
-            setTotalTracks(0);
-            setOverallPercent(0);
-            setTrackStatuses({});
-        } catch (err: any) {
-            console.error("Cancel error:", err);
-            setMessage(`Cancel failed: ${err.message}`);
-        }
-    };
-
-    const startRip = async () => {
+    // Kick off the import via the global ImportContext.
+    // The context owns the rip-progress listener so navigation away from this
+    // page will NOT stop the import.
+    const startRip = () => {
         if (!selectedDrive) return;
+        if (isEditingMetadata) setIsEditingMetadata(false);
 
-        // Exit editing mode if active
-        if (isEditingMetadata) {
-            setIsEditingMetadata(false);
-        }
-
-        // Set up progress tracking
-        const trackCount = metadata?.tracks?.length || 12;
-        setTotalTracks(trackCount);
-        setCurrentTrack(0);
-        setOverallPercent(0);
-        setRipStartTime(Date.now());
-        setRipSessionId(null);
-        setWarningMessage(null);
-
-        // Initialize all tracks as pending
-        const initialStatuses: Record<string, { status: string; percent: number }> = {};
-        if (metadata?.tracks) {
-            for (const t of metadata.tracks) {
-                initialStatuses[String(t.track_number)] = { status: 'pending', percent: 0 };
-            }
-        }
-        setTrackStatuses(initialStatuses);
-
-        setStatus("ripping");
-        setMessage(`Preparing to import ${trackCount} tracks...`);
-
-        // Remove old listeners before registering new ones (prevent leak)
-        if (api.isElectron() && (window as any).electronAPI?.removeAllListeners) {
-            (window as any).electronAPI.removeAllListeners('rip-progress');
-        }
-
-        // Listen for real-time progress updates from Electron
-        if (api.isElectron() && (window as any).electronAPI?.on) {
-            (window as any).electronAPI.on('rip-progress', (data: any) => {
-                console.log('[CDImporter] Progress update:', data);
-
-                if (data.type === 'session') {
-                    setRipSessionId(data.session_id);
-                } else if (data.type === 'progress') {
-                    setMessage(data.message);
-
-                    if (data.stage === 'cancelled') {
-                        setStatus("idle");
-                        setMessage("Import cancelled.");
-                        setRipSessionId(null);
-                        return;
-                    }
-
-                    // During "reading" stage, current/total are percent (0-100/100).
-                    // During "extracting"/"track_done" stages, they are track counts.
-                    if (data.stage === 'reading' || data.stage === 'track_progress') {
-                        setOverallPercent(data.current);
-                    } else if (data.stage === 'extracting' || data.stage === 'track_done' || data.stage === 'processing') {
-                        // Extraction phase: progress is 100% read + extraction progress
-                        setOverallPercent(100);
-                        setCurrentTrack(data.current);
-                        setTotalTracks(data.total);
-                    }
-
-                    // Update per-track status
-                    if (data.track_number != null) {
-                        const key = String(data.track_number);
-                        if (data.stage === 'track_done') {
-                            setTrackStatuses(prev => ({ ...prev, [key]: { status: 'done', percent: 100 } }));
-                        } else if (data.stage === 'track_progress') {
-                            const pct = data.track_percent ?? 0;
-                            setTrackStatuses(prev => ({
-                                ...prev,
-                                [key]: { status: 'active', percent: Math.min(pct, 100) }
-                            }));
-                        } else {
-                            setTrackStatuses(prev => ({ ...prev, [key]: { status: 'active', percent: prev[key]?.percent ?? 0 } }));
-                        }
-                    }
-                } else if (data.type === 'saved') {
-                    setMessage('Saved to library!');
-                } else if (data.type === 'warning') {
-                    setWarningMessage(data.message);
-                }
-            });
-        }
-
-        try {
-            const data = await api.system.ripCd({
-                drive_path: selectedDrive,
-                token,
-                mongo_user_id: user?.id,
-                metadata: metadata
-            });
-
-            // Cleanup listener
-            if (api.isElectron() && (window as any).electronAPI?.removeAllListeners) {
-                (window as any).electronAPI.removeAllListeners('rip-progress');
-            }
-
-            if (data.status === "started" || data.status === "completed") {
-                setCurrentTrack(trackCount);
-                setMessage("Import completed. Finalizing library...");
-                // Mark all tracks as done
-                setTrackStatuses(prev => {
-                    const all: Record<string, { status: string; percent: number }> = {};
-                    for (const k of Object.keys(prev)) all[k] = { status: 'done', percent: 100 };
-                    return all;
-                });
-                setTimeout(() => {
-                    setStatus("completed");
-                    const albumName = metadata?.album || "Album";
-                    const artistName = metadata?.artist || "Unknown Artist";
-                    setMessage(`"${albumName}" by ${artistName} has been added to your library!`);
-                    setCurrentTrack(0);
-                    setTotalTracks(0);
-                    setOverallPercent(0);
-                    setTrackStatuses({});
-                    setRipSessionId(null);
-                }, 1500);
-            } else {
-                throw new Error("Import failed");
-            }
-        } catch (err: any) {
-            // Cleanup listener
-            if (api.isElectron() && (window as any).electronAPI?.removeAllListeners) {
-                (window as any).electronAPI.removeAllListeners('rip-progress');
-            }
-            console.error("Import Error Details:", err);
-            setStatus("error");
-            setMessage(`Import failed: ${err.message || JSON.stringify(err)}`);
-            setCurrentTrack(0);
-            setTotalTracks(0);
-            setOverallPercent(0);
-            setTrackStatuses({});
-            setRipSessionId(null);
-        }
+        startImport({
+            drive_path: selectedDrive,
+            token,
+            mongo_user_id: user?.id,
+            metadata,
+        });
     };
 
     const containerVariants = {
@@ -691,7 +546,7 @@ export default function CDImporter() {
                             <motion.button
                                 whileHover={{ scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
-                                onClick={cancelRip}
+                                onClick={cancelImport}
                                 className="w-full py-4 px-6 rounded-xl font-bold shadow-lg shadow-black/20 transition-all flex items-center justify-center gap-2.5 bg-red-600/80 hover:bg-red-600 text-white border border-red-500/50"
                             >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -107,7 +107,7 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                     <div className="flex items-center gap-3 justify-center md:justify-start text-xl text-zinc-300 mb-6">
                         <span className="font-medium text-white">{album.artist}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />
-                        <span className="text-zinc-400">{new Date(album.created_at).getFullYear() || new Date().getFullYear()}</span>
+                        <span className="text-zinc-400">{new Date((album as any).createdAt || album.created_at).getFullYear() || new Date().getFullYear()}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />
                         <span className="text-zinc-400">{tracks.length} tracks</span>
                     </div>

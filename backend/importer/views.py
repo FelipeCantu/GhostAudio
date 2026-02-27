@@ -149,7 +149,12 @@ def rip_cd(request):
         # 2. Bridge to MongoDB (Primary)
         if mongo_user_id and settings.MONGODB_URI:
             try:
-                client = MongoClient(settings.MONGODB_URI)
+                client = MongoClient(
+                    settings.MONGODB_URI,
+                    serverSelectionTimeoutMS=5000,
+                    socketTimeoutMS=10000,
+                    connectTimeoutMS=5000,
+                )
                 db = client.get_database() # Uses database from URI
                 albums_collection = db['albums']
                 
@@ -316,7 +321,12 @@ def rip_cd_stream(request):
             # After rip complete, save to MongoDB
             if result_holder['tracks'] and mongo_user_id and settings.MONGODB_URI:
                 try:
-                    client = MongoClient(settings.MONGODB_URI)
+                    client = MongoClient(
+                        settings.MONGODB_URI,
+                        serverSelectionTimeoutMS=5000,
+                        socketTimeoutMS=10000,
+                        connectTimeoutMS=5000,
+                    )
                     db = client.get_database()
                     albums_collection = db['albums']
 
@@ -444,7 +454,12 @@ def mongo_delete_album(request, album_id):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = MongoClient(settings.MONGODB_URI)
+        client = MongoClient(
+            settings.MONGODB_URI,
+            serverSelectionTimeoutMS=5000,
+            socketTimeoutMS=10000,
+            connectTimeoutMS=5000,
+        )
         db = client.get_database()
         albums_collection = db['albums']
 
@@ -480,7 +495,12 @@ def mongo_import_local(request):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = MongoClient(settings.MONGODB_URI)
+        client = MongoClient(
+            settings.MONGODB_URI,
+            serverSelectionTimeoutMS=5000,
+            socketTimeoutMS=10000,
+            connectTimeoutMS=5000,
+        )
         db = client.get_database()
         albums_collection = db['albums']
 
@@ -517,7 +537,12 @@ def mongo_library(request):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = MongoClient(settings.MONGODB_URI)
+        client = MongoClient(
+            settings.MONGODB_URI,
+            serverSelectionTimeoutMS=5000,
+            socketTimeoutMS=10000,
+            connectTimeoutMS=5000,
+        )
         db = client.get_database()
         albums_collection = db['albums']
 
@@ -529,6 +554,7 @@ def mongo_library(request):
             album['user'] = str(album['user'])
             if 'createdAt' in album:
                 album['createdAt'] = album['createdAt'].isoformat()
+                album['created_at'] = album['createdAt']  # alias for frontend compatibility
 
         return Response(albums)
     except Exception as e:

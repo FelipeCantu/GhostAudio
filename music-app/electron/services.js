@@ -186,8 +186,27 @@ const Services = {
             });
             return await response.json();
         } catch (e) {
-            console.error('[Electron cancelRip] Error:', e);
-            return { error: e.message };
+            console.warn('[Electron cancelRip] fetch failed, trying net.request:', e);
+            try {
+                return await new Promise((resolve, reject) => {
+                    const request = net.request({ method: 'POST', url });
+                    request.setHeader('Content-Type', 'application/json');
+                    request.on('response', (response) => {
+                        let data = '';
+                        response.on('data', (chunk) => data += chunk);
+                        response.on('end', () => {
+                            try { resolve(JSON.parse(data)); }
+                            catch (parseErr) { reject(parseErr); }
+                        });
+                    });
+                    request.on('error', (err) => reject(err));
+                    request.write(body);
+                    request.end();
+                });
+            } catch (netErr) {
+                console.error('[Electron cancelRip] All attempts failed:', netErr);
+                return { error: netErr.message };
+            }
         }
     },
 

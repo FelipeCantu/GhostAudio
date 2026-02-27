@@ -1,6 +1,61 @@
+# ---- Node / Electron ----
+node_modules/
 music-app/dist/
 music-app/resources/
-backend/build/
-*.exe
+music-app/.next/
+music-app/out/
+.next/
+out/
+*.log
+
+# ---- Python / Django ----
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+backend/db.sqlite3
+db.sqlite3
+backend/venv/
+venv/
+.venv/
+*.egg-info/
+dist/
+*.egg
+
+# ---- PyInstaller build artifacts ----
+build/
+backend/build/
 *.spec
+*.toc
+*.pyz
+*.pkg
+*.zip
+
+# ---- Environment / secrets ----
+.env
+.env.local
+.env*.local
+*.env
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ---- Claude Code local config ----
+.claude/
+
+# ---- Large binaries / build artifacts ----
+backend/bin/
+music-app/public/downloads/
+
+# ---- Music library (user data, not source) ----
+music_library/
+backend/music_library/
+music-app/music_library/
+
+# ---- Temp / misc ----
+temp_icons/
+builder_log.txt

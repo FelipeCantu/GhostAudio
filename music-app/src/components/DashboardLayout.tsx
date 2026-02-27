@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Sidebar from "./Sidebar";
+import ImportIndicator from "./ImportIndicator";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { Menu } from "lucide-react";
@@ -43,6 +44,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 onClose={() => setIsMobileMenuOpen(false)}
             />
 
+            <ImportIndicator />
+
             {/* Main Content Area */}
             <div className="flex-1 flex flex-col min-w-0 lg:ml-64 transition-all duration-300">
                 {/* Mobile Header */}
@@ -65,7 +68,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </div>
                 </header>
 
-                <main className="flex-1 p-4 md:p-8 relative z-10 overflow-y-auto">
+                <main className="flex-1 p-4 md:p-8 pb-28 relative z-10 overflow-y-auto">
                     <div className="max-w-7xl mx-auto">
                         {children}
                     </div>
