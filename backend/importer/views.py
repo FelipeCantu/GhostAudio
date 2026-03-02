@@ -75,8 +75,10 @@ def mongo_auth_register(request):
         if db['users'].find_one({'username': username}):
             return Response({'error': 'User already exists'}, status=400)
         hashed = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
-        db['users'].insert_one({'username': username, 'password': hashed,
-                                'email': email, 'createdAt': datetime.now()})
+        user_doc = {'username': username, 'password': hashed, 'createdAt': datetime.now()}
+        if email:
+            user_doc['email'] = email
+        db['users'].insert_one(user_doc)
         return Response({'success': True, 'username': username}, status=201)
     except Exception as e:
         logger.error(f"mongo_auth_register error: {e}")

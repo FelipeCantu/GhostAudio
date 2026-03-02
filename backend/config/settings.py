@@ -25,20 +25,29 @@ if env_path.exists():
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-test-key')
 
-DEBUG = 'RENDER' not in os.environ
+DEBUG = os.environ.get('DJANGO_DEBUG', 'true').lower() == 'true'
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+# Render
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
-    ALLOWED_HOSTS.append('.onrender.com') # Allow all render subdomains
+    ALLOWED_HOSTS.append('.onrender.com')
+# Railway
+RAILWAY_PUBLIC_DOMAIN = os.environ.get('RAILWAY_PUBLIC_DOMAIN')
+if RAILWAY_PUBLIC_DOMAIN:
+    ALLOWED_HOSTS.append(RAILWAY_PUBLIC_DOMAIN)
+    ALLOWED_HOSTS.append('.railway.app')
 
-# CORS Configuration
 # CORS Configuration
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
     "https://ghost-audio.vercel.app",
     "http://localhost:3000",
+]
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.vercel\.app$",
+    r"^https://.*\.railway\.app$",
 ]
 CORS_ALLOW_CREDENTIALS = True
 
