@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useRef, useEffect } from "react";
-import { Track } from "@/services/api";
+import { Track, Playlist } from "@/services/api";
 
 interface AlbumInfo {
     title: string;
@@ -15,6 +15,7 @@ interface PlayerContextType {
     isPlaying: boolean;
     queue: Track[];
     playTrack: (track: Track, newQueue?: Track[], albumInfo?: AlbumInfo) => void;
+    playPlaylist: (playlist: Playlist, startIndex?: number) => void;
     togglePlay: () => void;
     nextTrack: () => void;
     prevTrack: () => void;
@@ -163,6 +164,24 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
+    const playPlaylist = (playlist: Playlist, startIndex = 0) => {
+        const items = playlist.items || [];
+        if (items.length === 0) return;
+        const tracks: Track[] = items.map((item, idx) => ({
+            id: idx + 1,
+            title: item.title,
+            track_number: item.trackNumber,
+            audio_file: item.audioFile,
+            duration: item.duration,
+        }));
+        const albumInfo: AlbumInfo = {
+            title: playlist.name,
+            artist: '',
+            coverArt: playlist.cover_arts?.[0],
+        };
+        playTrack(tracks[startIndex], tracks, albumInfo);
+    };
+
     const togglePlay = () => {
         if (!currentTrack) return;
 
@@ -216,6 +235,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             isPlaying,
             queue,
             playTrack,
+            playPlaylist,
             togglePlay,
             nextTrack,
             prevTrack,

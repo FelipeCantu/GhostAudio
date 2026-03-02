@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
     invoke: (channel, data) => {
         // Whitelist channels
-        const validChannels = ['get-drives', 'rip-cd', 'cancel-rip', 'auth-login', 'auth-register', 'auth-me', 'library-get', 'library-delete', 'library-add', 'dashboard-stats', 'system-status', 'get-cd-metadata', 'import-local-files'];
+        const validChannels = ['get-drives', 'rip-cd', 'cancel-rip', 'auth-login', 'auth-register', 'auth-me', 'library-get', 'library-delete', 'library-add', 'dashboard-stats', 'system-status', 'get-cd-metadata', 'import-local-files', 'playlist-get-all', 'playlist-get-one', 'playlist-create', 'playlist-update', 'playlist-delete', 'playlist-add-items', 'playlist-remove-item', 'playlist-refresh'];
         if (validChannels.includes(channel)) {
             return ipcRenderer.invoke(channel, data);
         }

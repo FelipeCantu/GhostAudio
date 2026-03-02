@@ -23,9 +23,22 @@ urlpatterns = [
     # Dashboard API
     path('dashboard/stats/', views.dashboard_stats, name='dashboard_stats'),
 
+    # MongoDB Auth (shared between desktop and web)
+    path('mongo/auth/register/', views.mongo_auth_register, name='mongo_auth_register'),
+    path('mongo/auth/login/', views.mongo_auth_login, name='mongo_auth_login'),
+    path('mongo/auth/me/', views.mongo_auth_me, name='mongo_auth_me'),
+    path('mongo/upload-audio/', views.mongo_upload_audio, name='mongo_upload_audio'),
+
     # MongoDB Direct (Desktop App)
     path('mongo/import-local/', views.mongo_import_local, name='mongo_import_local'),
     path('mongo/library/', views.mongo_library, name='mongo_library'),
     path('mongo/library/<str:album_id>/', views.mongo_delete_album, name='mongo_delete_album'),
     path('mongo/stats/', views.mongo_stats, name='mongo_stats'),
+
+    # Playlists
+    path('mongo/playlists/', views.mongo_playlists, name='mongo_playlists'),
+    path('mongo/playlists/<str:playlist_id>/', views.mongo_playlist_detail, name='mongo_playlist_detail'),
+    path('mongo/playlists/<str:playlist_id>/items/', views.mongo_playlist_items, name='mongo_playlist_items'),
+    path('mongo/playlists/<str:playlist_id>/items/<int:item_index>/', views.mongo_playlist_item_delete, name='mongo_playlist_item_delete'),
+    path('mongo/playlists/<str:playlist_id>/refresh/', views.mongo_playlist_refresh, name='mongo_playlist_refresh'),
 ]

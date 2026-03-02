@@ -403,10 +403,31 @@ ipcMain.handle('import-local-files', async (event, args) => {
     let trackTitle = path.basename(fileName, path.extname(fileName));
     trackTitle = trackTitle.replace(/^\d+[\s\-_.]*/, ''); // Remove leading track numbers
 
+    // Upload to R2 if backend supports it; fall back to local path
+    let audioUrl = destFile;
+    try {
+      const fileBuffer = fs.readFileSync(destFile);
+      const formData = new FormData();
+      formData.append('user_id', mongo_user_id);
+      formData.append('album_title', albumName);
+      formData.append('artist', artistName);
+      formData.append('file', new Blob([fileBuffer]), path.basename(destFile));
+      const uploadRes = await fetch('http://127.0.0.1:8000/api/mongo/upload-audio/', {
+        method: 'POST',
+        body: formData
+      });
+      if (uploadRes.ok) {
+        const { url } = await uploadRes.json();
+        if (url) audioUrl = url;
+      }
+    } catch (uploadErr) {
+      console.warn('[Import Local] R2 upload failed, using local path:', uploadErr.message);
+    }
+
     tracks.push({
       title: trackTitle || `Track ${i + 1}`,
       trackNumber: i + 1,
-      audioFile: destFile,
+      audioFile: audioUrl,
       duration: '00:00'
     });
   }
@@ -435,6 +456,42 @@ ipcMain.handle('import-local-files', async (event, args) => {
     console.error('[Import Local] Error saving album:', err);
     return { success: false, error: err.message };
   }
+});
+
+// Playlist IPC Handlers
+ipcMain.handle('playlist-get-all', async (event, args) => {
+  return await services.Playlists.getAll(args.mongo_user_id);
+});
+
+ipcMain.handle('playlist-get-one', async (event, args) => {
+  return await services.Playlists.getOne(args.playlist_id, args.mongo_user_id);
+});
+
+ipcMain.handle('playlist-create', async (event, args) => {
+  return await services.Playlists.create(args);
+});
+
+ipcMain.handle('playlist-update', async (event, args) => {
+  const { playlist_id, ...data } = args;
+  return await services.Playlists.update(playlist_id, data);
+});
+
+ipcMain.handle('playlist-delete', async (event, args) => {
+  return await services.Playlists.delete(args.playlist_id, args.mongo_user_id);
+});
+
+ipcMain.handle('playlist-add-items', async (event, args) => {
+  const { playlist_id, ...data } = args;
+  return await services.Playlists.addItems(playlist_id, data);
+});
+
+ipcMain.handle('playlist-remove-item', async (event, args) => {
+  return await services.Playlists.removeItem(args.playlist_id, args.item_index, args.mongo_user_id);
+});
+
+ipcMain.handle('playlist-refresh', async (event, args) => {
+  const { playlist_id, ...data } = args;
+  return await services.Playlists.refresh(playlist_id, data);
 });
 
 // Library add removed - handled by Rip CD process

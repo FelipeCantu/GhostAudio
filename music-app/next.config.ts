@@ -1,13 +1,20 @@
 import type { NextConfig } from "next";
 
+const isElectronBuild = process.env.ELECTRON_BUILD === "true";
+
 const nextConfig: NextConfig = {
-  output: "export",
+  // Static export only for Electron packaging; Vercel uses full SSR
+  ...(isElectronBuild ? { output: "export" } : {}),
   images: {
-    unoptimized: true, // Required for static export
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",
         hostname: "coverartarchive.org",
+      },
+      {
+        protocol: "https",
+        hostname: "pub-72ff760424884b299f39ed9ed1354674.r2.dev",
       },
     ],
   },

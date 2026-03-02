@@ -369,6 +369,69 @@ const Services = {
         }
     },
 
+    Playlists: {
+        getAll: async (mongoUserId) => {
+            const response = await fetch(`http://127.0.0.1:8000/api/mongo/playlists/?user_id=${mongoUserId}`);
+            if (!response.ok) throw new Error('Failed to fetch playlists');
+            return await response.json();
+        },
+        getOne: async (playlistId, mongoUserId) => {
+            const response = await fetch(`http://127.0.0.1:8000/api/mongo/playlists/${playlistId}/?user_id=${mongoUserId}`);
+            if (!response.ok) throw new Error('Failed to fetch playlist');
+            return await response.json();
+        },
+        create: async (data) => {
+            const response = await fetch('http://127.0.0.1:8000/api/mongo/playlists/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Failed to create playlist');
+            return await response.json();
+        },
+        update: async (playlistId, data) => {
+            const response = await fetch(`http://127.0.0.1:8000/api/mongo/playlists/${playlistId}/`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Failed to update playlist');
+            return await response.json();
+        },
+        delete: async (playlistId, mongoUserId) => {
+            const response = await fetch(`http://127.0.0.1:8000/api/mongo/playlists/${playlistId}/?user_id=${mongoUserId}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) throw new Error('Failed to delete playlist');
+            return await response.json();
+        },
+        addItems: async (playlistId, data) => {
+            const response = await fetch(`http://127.0.0.1:8000/api/mongo/playlists/${playlistId}/items/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Failed to add items');
+            return await response.json();
+        },
+        removeItem: async (playlistId, itemIndex, mongoUserId) => {
+            const response = await fetch(`http://127.0.0.1:8000/api/mongo/playlists/${playlistId}/items/${itemIndex}/?user_id=${mongoUserId}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) throw new Error('Failed to remove item');
+            return await response.json();
+        },
+        refresh: async (playlistId, data) => {
+            const response = await fetch(`http://127.0.0.1:8000/api/mongo/playlists/${playlistId}/refresh/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Failed to refresh playlist');
+            return await response.json();
+        },
+    },
+
     getDashboardStats: async (token, mongoUserId) => {
         const defaultStats = { total_albums: 0, total_tracks: 0, recent_albums: [] };
 

@@ -15,12 +15,125 @@ from pymongo import MongoClient
 from django.conf import settings
 from .services import CDRipper
 from .serializers import UserSerializer
+import boto3
+from botocore.config import Config as BotoConfig
+import jwt as pyjwt
+import bcrypt as _bcrypt
 
 logger = logging.getLogger(__name__)
 
 # Active rip session registry for cancellation support
 _active_rips = {}   # session_id -> CDRipper instance
 _rips_lock = threading.Lock()
+
+_JWT_SECRET = os.environ.get('JWT_SECRET', 'fallback_secret')
+
+
+# --- R2 Helpers ---
+
+def _get_r2_client():
+    return boto3.client(
+        's3',
+        endpoint_url=f'https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com',
+        aws_access_key_id=settings.R2_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
+        config=BotoConfig(signature_version='s3v4'),
+        region_name='auto',
+    )
+
+
+def _upload_to_r2(local_path: str, object_key: str) -> str:
+    """Upload file to R2, return public URL. Returns local_path unchanged if R2 not configured."""
+    if not settings.R2_ACCOUNT_ID:
+        return local_path
+    try:
+        ext = os.path.splitext(local_path)[1].lower().lstrip('.')
+        mime = {'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac',
+                'm4a': 'audio/mp4', 'aac': 'audio/aac', 'ogg': 'audio/ogg'}.get(ext, 'application/octet-stream')
+        _get_r2_client().upload_file(local_path, settings.R2_BUCKET_NAME, object_key,
+                                     ExtraArgs={'ContentType': mime})
+        return f"{settings.R2_PUBLIC_URL}/{object_key}"
+    except Exception as e:
+        logger.warning(f"R2 upload failed for {local_path}: {e}")
+        return local_path  # graceful fallback
+
+
+# --- MongoDB Auth Views ---
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def mongo_auth_register(request):
+    username = request.data.get('username', '').strip()
+    password = request.data.get('password', '')
+    email = request.data.get('email') or None
+    if not username or not password:
+        return Response({'error': 'username and password required'}, status=400)
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+    try:
+        db = _get_mongo_client().get_database()
+        if db['users'].find_one({'username': username}):
+            return Response({'error': 'User already exists'}, status=400)
+        hashed = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
+        db['users'].insert_one({'username': username, 'password': hashed,
+                                'email': email, 'createdAt': datetime.now()})
+        return Response({'success': True, 'username': username}, status=201)
+    except Exception as e:
+        logger.error(f"mongo_auth_register error: {e}")
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def mongo_auth_login(request):
+    username = request.data.get('username', '').strip()
+    password = request.data.get('password', '')
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+    try:
+        db = _get_mongo_client().get_database()
+        user = db['users'].find_one({'username': username})
+        if not user or not _bcrypt.checkpw(password.encode(), user['password'].encode()):
+            return Response({'error': 'Invalid credentials'}, status=401)
+        token = pyjwt.encode({'id': str(user['_id']), 'username': username}, _JWT_SECRET, algorithm='HS256')
+        return Response({'access': token, 'user': {'id': str(user['_id']), 'username': username}})
+    except Exception as e:
+        logger.error(f"mongo_auth_login error: {e}")
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def mongo_auth_me(request):
+    auth = request.headers.get('Authorization', '')
+    if not auth.startswith('Bearer '):
+        return Response({'error': 'No token'}, status=401)
+    try:
+        payload = pyjwt.decode(auth[7:], _JWT_SECRET, algorithms=['HS256'])
+        return Response({'id': payload['id'], 'username': payload['username']})
+    except Exception:
+        return Response({'error': 'Invalid token'}, status=401)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def mongo_upload_audio(request):
+    user_id = request.data.get('user_id')
+    album_title = request.data.get('album_title', 'Unknown')
+    artist = request.data.get('artist', 'Unknown Artist')
+    audio_file = request.FILES.get('file')
+    if not user_id or not audio_file:
+        return Response({'error': 'user_id and file required'}, status=400)
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.name)[1]) as tmp:
+        for chunk in audio_file.chunks():
+            tmp.write(chunk)
+        tmp_path = tmp.name
+    object_key = f"audio/{user_id}/{artist}/{album_title}/{audio_file.name}"
+    url = _upload_to_r2(tmp_path, object_key)
+    os.unlink(tmp_path)
+    return Response({'url': url})
+
 
 # --- Auth Views ---
 
@@ -178,7 +291,7 @@ def rip_cd(request):
                     track_title = f"Track {track_num}"
                     duration_ms = 0
                     duration_str = "00:00"
-                    
+
                     if metadata and 'tracks' in metadata and idx < len(metadata['tracks']):
                         track_info = metadata['tracks'][idx]
                         track_title = track_info.get('title', track_title)
@@ -189,11 +302,13 @@ def rip_cd(request):
                             m, s = divmod(seconds, 60)
                             duration_str = f"{m:02d}:{s:02d}"
 
+                    object_key = f"audio/{mongo_user_id}/{artist_name}/{album_title}/{os.path.basename(str(path))}"
+                    audio_url = _upload_to_r2(str(path), object_key)
                     mongo_tracks.append({
                         'title': track_title,
                         'trackNumber': track_num,
-                        'audioFile': str(path),
-                        'duration': duration_str 
+                        'audioFile': audio_url,
+                        'duration': duration_str
                     })
 
                 new_album = {
@@ -343,10 +458,12 @@ def rip_cd_stream(request):
                                 m, s = divmod(seconds, 60)
                                 duration_str = f"{m:02d}:{s:02d}"
 
+                        object_key = f"audio/{mongo_user_id}/{artist_name}/{album_title}/{os.path.basename(str(path))}"
+                        audio_url = _upload_to_r2(str(path), object_key)
                         mongo_tracks.append({
                             'title': track_title,
                             'trackNumber': track_num,
-                            'audioFile': str(path),
+                            'audioFile': audio_url,
                             'duration': duration_str
                         })
 
@@ -583,3 +700,288 @@ def mongo_stats(request):
     except Exception as e:
         logger.warning(f"MongoDB stats unavailable: {e}")
         return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})
+
+
+# --- Playlist Endpoints ---
+
+def _get_mongo_client():
+    return MongoClient(
+        settings.MONGODB_URI,
+        serverSelectionTimeoutMS=5000,
+        socketTimeoutMS=10000,
+        connectTimeoutMS=5000,
+    )
+
+
+def _serialize_playlist(p, full=False):
+    """Convert a MongoDB playlist document to a JSON-serializable dict."""
+    items = p.get('items', [])
+    result = {
+        'id': str(p['_id']),
+        'name': p.get('name', ''),
+        'description': p.get('description', ''),
+        'is_smart': p.get('isSmart', False),
+        'smart_rule': p.get('smartRule'),
+        'item_count': len(items),
+        'cover_arts': list({i.get('coverArt', '') for i in items if i.get('coverArt')})[:4],
+        'created_at': p['createdAt'].isoformat() if isinstance(p.get('createdAt'), datetime) else str(p.get('createdAt', '')),
+        'updated_at': p['updatedAt'].isoformat() if isinstance(p.get('updatedAt'), datetime) else str(p.get('updatedAt', '')),
+    }
+    if full:
+        result['items'] = items
+    return result
+
+
+def _resolve_smart_rule(user_id, rule, albums_col):
+    """Build items list from a smart rule."""
+    import random as _random
+    rule_type = rule.get('type')
+    value = rule.get('value', '')
+
+    def album_to_items(album):
+        tracks = []
+        for t in album.get('tracks', []):
+            tracks.append({
+                'albumId': str(album['_id']),
+                'trackNumber': t.get('trackNumber', 0),
+                'title': t.get('title', ''),
+                'artist': album.get('artist', ''),
+                'albumTitle': album.get('title', ''),
+                'audioFile': t.get('audioFile', ''),
+                'duration': t.get('duration', ''),
+                'coverArt': album.get('coverArt', ''),
+            })
+        return tracks
+
+    if rule_type == 'by_artist':
+        albums = list(albums_col.find({
+            'user': ObjectId(user_id),
+            'artist': {'$regex': value, '$options': 'i'}
+        }).sort('createdAt', 1))
+        items = []
+        for a in albums:
+            items.extend(album_to_items(a))
+        return items
+
+    elif rule_type == 'recently_added':
+        albums = list(albums_col.find({'user': ObjectId(user_id)}).sort('createdAt', -1).limit(10))
+        items = []
+        for a in albums:
+            items.extend(album_to_items(a))
+        return items
+
+    elif rule_type == 'random':
+        albums = list(albums_col.find({'user': ObjectId(user_id)}))
+        items = []
+        for a in albums:
+            items.extend(album_to_items(a))
+        _random.shuffle(items)
+        return items[:50]
+
+    return []
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([permissions.AllowAny])
+def mongo_playlists(request):
+    """List all playlists for a user (GET) or create a new one (POST)."""
+    user_id = request.query_params.get('user_id') or (request.data.get('user_id') if request.method == 'POST' else None)
+    if not user_id:
+        return Response({'error': 'user_id required'}, status=400)
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+
+    try:
+        client = _get_mongo_client()
+        db = client.get_database()
+        playlists_col = db['playlists']
+        albums_col = db['albums']
+
+        if request.method == 'GET':
+            docs = list(playlists_col.find({'user': ObjectId(user_id)}).sort('createdAt', -1))
+            return Response([_serialize_playlist(p) for p in docs])
+
+        # POST — create playlist
+        data = request.data
+        name = data.get('name', '').strip()
+        if not name:
+            return Response({'error': 'name required'}, status=400)
+
+        is_smart = bool(data.get('is_smart', False))
+        smart_rule = data.get('smart_rule') if is_smart else None
+        now = datetime.now()
+
+        items = []
+        if is_smart and smart_rule:
+            items = _resolve_smart_rule(user_id, smart_rule, albums_col)
+
+        doc = {
+            'user': ObjectId(user_id),
+            'name': name,
+            'description': data.get('description', ''),
+            'isSmart': is_smart,
+            'smartRule': smart_rule,
+            'items': items,
+            'createdAt': now,
+            'updatedAt': now,
+        }
+        result = playlists_col.insert_one(doc)
+        doc['_id'] = result.inserted_id
+        return Response(_serialize_playlist(doc, full=True), status=201)
+    except Exception as e:
+        logger.error(f"mongo_playlists error: {e}")
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['GET', 'PATCH', 'DELETE'])
+@permission_classes([permissions.AllowAny])
+def mongo_playlist_detail(request, playlist_id):
+    """Get, update, or delete a single playlist."""
+    user_id = request.query_params.get('user_id') or request.data.get('user_id')
+    if not user_id:
+        return Response({'error': 'user_id required'}, status=400)
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+
+    try:
+        client = _get_mongo_client()
+        db = client.get_database()
+        playlists_col = db['playlists']
+
+        playlist = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        if not playlist:
+            return Response({'error': 'Playlist not found'}, status=404)
+        if str(playlist['user']) != user_id:
+            return Response({'error': 'Not authorized'}, status=403)
+
+        if request.method == 'GET':
+            return Response(_serialize_playlist(playlist, full=True))
+
+        if request.method == 'DELETE':
+            playlists_col.delete_one({'_id': ObjectId(playlist_id)})
+            return Response({'status': 'deleted'})
+
+        # PATCH — update fields
+        data = request.data
+        updates = {'updatedAt': datetime.now()}
+        if 'name' in data:
+            updates['name'] = data['name']
+        if 'description' in data:
+            updates['description'] = data['description']
+        if 'items' in data:
+            updates['items'] = data['items']
+        playlists_col.update_one({'_id': ObjectId(playlist_id)}, {'$set': updates})
+        updated = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        return Response(_serialize_playlist(updated, full=True))
+    except Exception as e:
+        logger.error(f"mongo_playlist_detail error: {e}")
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def mongo_playlist_items(request, playlist_id):
+    """Append items to a playlist."""
+    user_id = request.data.get('user_id')
+    if not user_id:
+        return Response({'error': 'user_id required'}, status=400)
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+
+    try:
+        client = _get_mongo_client()
+        db = client.get_database()
+        playlists_col = db['playlists']
+
+        playlist = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        if not playlist:
+            return Response({'error': 'Playlist not found'}, status=404)
+        if str(playlist['user']) != user_id:
+            return Response({'error': 'Not authorized'}, status=403)
+
+        new_items = request.data.get('items', [])
+        playlists_col.update_one(
+            {'_id': ObjectId(playlist_id)},
+            {
+                '$push': {'items': {'$each': new_items}},
+                '$set': {'updatedAt': datetime.now()},
+            }
+        )
+        updated = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        return Response(_serialize_playlist(updated, full=True))
+    except Exception as e:
+        logger.error(f"mongo_playlist_items error: {e}")
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['DELETE'])
+@permission_classes([permissions.AllowAny])
+def mongo_playlist_item_delete(request, playlist_id, item_index):
+    """Remove a single item from a playlist by index."""
+    user_id = request.query_params.get('user_id')
+    if not user_id:
+        return Response({'error': 'user_id required'}, status=400)
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+
+    try:
+        client = _get_mongo_client()
+        db = client.get_database()
+        playlists_col = db['playlists']
+
+        playlist = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        if not playlist:
+            return Response({'error': 'Playlist not found'}, status=404)
+        if str(playlist['user']) != user_id:
+            return Response({'error': 'Not authorized'}, status=403)
+
+        items = playlist.get('items', [])
+        if item_index < 0 or item_index >= len(items):
+            return Response({'error': 'Index out of range'}, status=400)
+
+        items.pop(item_index)
+        playlists_col.update_one(
+            {'_id': ObjectId(playlist_id)},
+            {'$set': {'items': items, 'updatedAt': datetime.now()}}
+        )
+        updated = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        return Response(_serialize_playlist(updated, full=True))
+    except Exception as e:
+        logger.error(f"mongo_playlist_item_delete error: {e}")
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def mongo_playlist_refresh(request, playlist_id):
+    """Re-run a smart playlist's rule and replace items."""
+    user_id = request.data.get('user_id')
+    if not user_id:
+        return Response({'error': 'user_id required'}, status=400)
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+
+    try:
+        client = _get_mongo_client()
+        db = client.get_database()
+        playlists_col = db['playlists']
+        albums_col = db['albums']
+
+        playlist = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        if not playlist:
+            return Response({'error': 'Playlist not found'}, status=404)
+        if str(playlist['user']) != user_id:
+            return Response({'error': 'Not authorized'}, status=403)
+        if not playlist.get('isSmart') or not playlist.get('smartRule'):
+            return Response({'error': 'Not a smart playlist'}, status=400)
+
+        items = _resolve_smart_rule(user_id, playlist['smartRule'], albums_col)
+        playlists_col.update_one(
+            {'_id': ObjectId(playlist_id)},
+            {'$set': {'items': items, 'updatedAt': datetime.now()}}
+        )
+        updated = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        return Response(_serialize_playlist(updated, full=True))
+    except Exception as e:
+        logger.error(f"mongo_playlist_refresh error: {e}")
+        return Response({'error': str(e)}, status=500)

@@ -4,6 +4,7 @@ import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 import { PlayerProvider } from "@/context/PlayerContext";
 import { ImportProvider } from "@/context/ImportContext";
+import { PlaylistProvider } from "@/context/PlaylistContext";
 import PlayerBar from "@/components/PlayerBar";
 
 const geistSans = Geist({
@@ -54,12 +55,14 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <AuthProvider>
-          <ImportProvider>
-            <PlayerProvider>
-              {children}
-              <PlayerBar />
-            </PlayerProvider>
-          </ImportProvider>
+          <PlaylistProvider>
+            <ImportProvider>
+              <PlayerProvider>
+                {children}
+                <PlayerBar />
+              </PlayerProvider>
+            </ImportProvider>
+          </PlaylistProvider>
         </AuthProvider>
       </body>
     </html>

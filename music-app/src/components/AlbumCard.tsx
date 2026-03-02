@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { Disc, Play, Trash2 } from "lucide-react";
-import { Album } from "@/services/api";
+import { Disc, Play, Trash2, ListPlus } from "lucide-react";
+import { Album, PlaylistItem } from "@/services/api";
+import { usePlaylist } from "@/context/PlaylistContext";
 
 interface AlbumCardProps {
     album: Album;
@@ -12,12 +13,49 @@ interface AlbumCardProps {
 }
 
 export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) {
+    const { playlists, addItemsToPlaylist } = usePlaylist();
     const [imgError, setImgError] = useState(false);
     const [showConfirm, setShowConfirm] = useState(false);
+    const [showPlaylistMenu, setShowPlaylistMenu] = useState(false);
+    const [addedFlash, setAddedFlash] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
 
     // Handle both MongoDB (_id/coverArt) and Django (id/cover_art) formats
     const albumId = (album as any)._id || album.id;
     const coverArt = (album as any).coverArt || album.cover_art;
+
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setShowPlaylistMenu(false);
+            }
+        };
+        if (showPlaylistMenu) document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showPlaylistMenu]);
+
+    const buildPlaylistItems = (): PlaylistItem[] => {
+        const tracks = (album.tracks || []) as any[];
+        return tracks.map((t, idx) => ({
+            albumId: String(albumId),
+            trackNumber: t.trackNumber || t.track_number || idx + 1,
+            title: t.title || `Track ${idx + 1}`,
+            artist: album.artist,
+            albumTitle: album.title,
+            audioFile: t.audioFile || t.audio_file || '',
+            duration: t.duration || '',
+            coverArt: coverArt || '',
+        }));
+    };
+
+    const handleAddToPlaylist = async (e: React.MouseEvent, playlistId: string) => {
+        e.stopPropagation();
+        setShowPlaylistMenu(false);
+        const items = buildPlaylistItems();
+        await addItemsToPlaylist(playlistId, items);
+        setAddedFlash(true);
+        setTimeout(() => setAddedFlash(false), 1500);
+    };
 
     const handlePlay = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -71,16 +109,47 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
                 </div>
             )}
 
-            {/* Delete Button */}
-            {onDelete && (
-                <button
-                    onClick={handleDeleteClick}
-                    className="absolute top-2 right-2 z-10 p-1.5 rounded-lg bg-black/60 text-zinc-400 hover:text-red-400 hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-all"
-                    title="Delete album"
-                >
-                    <Trash2 size={16} />
-                </button>
-            )}
+            {/* Action Buttons (top-right) */}
+            <div className="absolute top-2 right-2 z-10 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                {/* Add to playlist */}
+                <div className="relative" ref={menuRef}>
+                    <button
+                        onClick={e => { e.stopPropagation(); setShowPlaylistMenu(v => !v); }}
+                        className={`p-1.5 rounded-lg bg-black/60 hover:bg-black/80 transition-all ${addedFlash ? 'text-[#f4d35e]' : 'text-zinc-400 hover:text-[#f4d35e]'}`}
+                        title="Add to playlist"
+                    >
+                        <ListPlus size={16} />
+                    </button>
+                    {showPlaylistMenu && (
+                        <div className="absolute top-full right-0 mt-1 w-48 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden">
+                            <div className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-zinc-500 border-b border-white/5">Add to playlist</div>
+                            {playlists.filter(p => !p.is_smart).length === 0 ? (
+                                <p className="px-3 py-2 text-xs text-zinc-500">No manual playlists.</p>
+                            ) : (
+                                playlists.filter(p => !p.is_smart).map(pl => (
+                                    <button
+                                        key={pl.id}
+                                        onClick={e => handleAddToPlaylist(e, pl.id)}
+                                        className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors truncate"
+                                    >
+                                        {pl.name}
+                                    </button>
+                                ))
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {onDelete && (
+                    <button
+                        onClick={handleDeleteClick}
+                        className="p-1.5 rounded-lg bg-black/60 text-zinc-400 hover:text-red-400 hover:bg-black/80 transition-all"
+                        title="Delete album"
+                    >
+                        <Trash2 size={16} />
+                    </button>
+                )}
+            </div>
 
             {/* Cover Art */}
             <div className="relative aspect-square w-full rounded-xl overflow-hidden mb-4 bg-black/40 shadow-lg">
