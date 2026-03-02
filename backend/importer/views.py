@@ -105,6 +105,7 @@ def mongo_auth_login(request):
 
 
 @api_view(['GET'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_auth_me(request):
     auth = request.headers.get('Authorization', '')
