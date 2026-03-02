@@ -204,6 +204,17 @@ class CDRipper:
             process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=stderr_file)
             self._current_process = process
 
+            # Hard timeout: kill ffmpeg if it runs more than 3× the expected duration.
+            # This prevents permanent hangs on bad sectors / slow drives near end of disc.
+            max_runtime = max(int(duration_seconds * 3), 600)  # at least 10 min
+            start_time = time.time()
+
+            # Stall detection: if the output file stops growing for 30s while at
+            # >=99% of expected size, the drive has finished but ffmpeg is frozen
+            # waiting for a "done" signal that never comes (common on Windows with libcdio).
+            last_size_change_time = time.time()
+            last_observed_size = 0
+
             # Monitor file size for progress
             last_percent = -1
             last_track_progress = {}  # track_number -> last reported percent
@@ -213,6 +224,14 @@ class CDRipper:
                     process.kill()
                     process.wait(timeout=5)
                     return False
+                elapsed = time.time() - start_time
+                if elapsed > max_runtime:
+                    logger.warning(
+                        f"ffmpeg exceeded timeout ({max_runtime}s), killing and proceeding with partial rip"
+                    )
+                    process.kill()
+                    process.wait(timeout=5)
+                    break  # Fall through to check file — treat partial WAV as usable
                 time.sleep(1)  # Check every second for snappier progress
                 try:
                     if output_image_path.exists():
@@ -252,9 +271,38 @@ class CDRipper:
                 except Exception as e:
                     logger.debug(f"Progress check error: {e}")
 
-            # Process finished, check result
+                # Stall detection: file at full size but not growing → ffmpeg is frozen
+                try:
+                    if output_image_path.exists():
+                        current_size = output_image_path.stat().st_size
+                        if current_size != last_observed_size:
+                            last_observed_size = current_size
+                            last_size_change_time = time.time()
+                        elif current_size >= expected_size * 0.99:
+                            stall_secs = time.time() - last_size_change_time
+                            if stall_secs > 30:
+                                logger.warning(
+                                    f"ffmpeg stalled: file at {current_size / 1024 / 1024:.0f} MB "
+                                    f"(expected {expected_size / 1024 / 1024:.0f} MB) for {stall_secs:.0f}s. "
+                                    "Killing ffmpeg and proceeding with captured audio."
+                                )
+                                process.kill()
+                                process.wait(timeout=5)
+                                break
+                except Exception:
+                    pass
+
+            # Process finished (or was killed by timeout/cancel), check result.
+            # If the output file has meaningful content, treat it as a success so
+            # the track-splitting phase can use whatever audio was captured.
             stderr_file.close()
             if process.returncode != 0:
+                if output_image_path.exists() and output_image_path.stat().st_size > 1024 * 1024:
+                    logger.warning(
+                        f"ffmpeg exited with code {process.returncode} but partial WAV is "
+                        f"{output_image_path.stat().st_size // 1024 // 1024} MB — proceeding with partial rip"
+                    )
+                    return True
                 try:
                     with open(stderr_path) as f:
                         err_output = f.read()

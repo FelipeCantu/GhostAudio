@@ -106,7 +106,7 @@ export default function CDImporter() {
         }
     }, [selectedDrive]);
 
-    const fetchMetadata = async (drive: string) => {
+const fetchMetadata = async (drive: string) => {
         console.log(`Fetching Metadata for drive: ${drive}`);
         setLocalMessage("Reading Disc...");
         setIsEditingMetadata(false);

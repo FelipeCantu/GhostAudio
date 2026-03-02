@@ -1,6 +1,6 @@
 from django.http import JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework import viewsets, permissions, status, generics
+from rest_framework import permissions, status, generics
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 import json
@@ -9,13 +9,12 @@ import os
 import queue
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from bson.objectid import ObjectId
 from pymongo import MongoClient
 from django.conf import settings
 from .services import CDRipper
-from .models import Album, Track
-from .serializers import AlbumSerializer, UserSerializer
+from .serializers import UserSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -36,39 +35,49 @@ class UserDetailView(generics.RetrieveAPIView):
     def get_object(self):
         return self.request.user
 
-# --- Library Views ---
-
-class AlbumViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = AlbumSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        return Album.objects.filter(user=self.request.user)
-
 @api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
+@permission_classes([permissions.AllowAny])
 def dashboard_stats(request):
     """
-    Get statistics for the user's library:
-    - Total Albums
-    - Total Tracks
-    - Recent Albums (top 5)
+    Get statistics for the user's library from MongoDB.
+    Accepts user_id as a query param (MongoDB ObjectId string).
     """
-    user = request.user
-    
-    # Counts
-    total_albums = Album.objects.filter(user=user).count()
-    total_tracks = Track.objects.filter(album__user=user).count()
-    
-    # Recent Activity
-    recent_albums_qs = Album.objects.filter(user=user).order_by('-created_at')[:5]
-    recent_albums = AlbumSerializer(recent_albums_qs, many=True).data
-    
-    return Response({
-        'total_albums': total_albums,
-        'total_tracks': total_tracks,
-        'recent_albums': recent_albums
-    })
+    user_id = request.query_params.get('user_id')
+    if not user_id:
+        return Response({'error': 'user_id required'}, status=400)
+
+    if not settings.MONGODB_URI:
+        return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})
+
+    try:
+        client = MongoClient(settings.MONGODB_URI, serverSelectionTimeoutMS=3000)
+        db = client.get_database()
+        albums_collection = db['albums']
+
+        albums = list(albums_collection.find({'user': ObjectId(user_id)}))
+
+        total_albums = len(albums)
+        total_tracks = sum(len(a.get('tracks', [])) for a in albums)
+
+        recent = albums_collection.find({'user': ObjectId(user_id)}).sort('createdAt', -1).limit(5)
+        recent_albums = []
+        for album in recent:
+            recent_albums.append({
+                'id': str(album['_id']),
+                'title': album.get('title', 'Unknown'),
+                'artist': album.get('artist', 'Unknown'),
+                'cover_art': album.get('coverArt', ''),
+                'track_count': len(album.get('tracks', []))
+            })
+
+        return Response({
+            'total_albums': total_albums,
+            'total_tracks': total_tracks,
+            'recent_albums': recent_albums
+        })
+    except Exception as e:
+        logger.warning(f"MongoDB dashboard_stats unavailable: {e}")
+        return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})
 
 # --- CD Import Views ---
 
@@ -203,37 +212,7 @@ def rip_cd(request):
                 logger.error(f"MongoDB Bridge Failed: {e}")
                 pass
 
-        # 3. Save to Django SQLite (Legacy/Backup)
-        if request.user.is_authenticated:
-            safe_metadata = metadata or {}
-            
-            album = Album.objects.create(
-                user=request.user,
-                title=safe_metadata.get('album', 'Unknown Album'),
-                artist=safe_metadata.get('artist', 'Unknown Artist'),
-                cover_art=safe_metadata.get('cover_art'),
-            )
-            
-            for idx, path in enumerate(tracks_paths):
-                track_num = idx + 1
-                track_title = f"Track {track_num}"
-                duration_val = None
-                if metadata and 'tracks' in metadata and idx < len(metadata['tracks']):
-                    track_info = metadata['tracks'][idx]
-                    track_title = track_info.get('title', track_title)
-                    d_ms = track_info.get('duration_ms', 0)
-                    if d_ms:
-                        duration_val = timedelta(milliseconds=int(d_ms))
-                
-                Track.objects.create(
-                    album=album,
-                    title=track_title,
-                    track_number=track_num,
-                    audio_file=str(path),
-                    duration=duration_val
-                )
-
-        return JsonResponse({'status': 'completed', 'message': 'Ripped and bridged to MongoDB'})
+        return JsonResponse({'status': 'completed', 'message': 'Ripped and saved to MongoDB'})
 
     except Exception as e:
         logger.error(f"Rip failed: {e}")

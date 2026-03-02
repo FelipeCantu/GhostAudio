@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { usePathname } from "next/navigation";
 import { useImport } from "@/context/ImportContext";
 
 export default function ImportIndicator() {
@@ -16,8 +17,11 @@ export default function ImportIndicator() {
         resetImport,
     } = useImport();
 
+    const pathname = usePathname();
     const [visible, setVisible] = useState(false);
     const [expanded, setExpanded] = useState(false);
+
+    if (pathname === "/import") return null;
 
     useEffect(() => {
         if (importStatus === 'ripping') {
@@ -113,6 +117,15 @@ export default function ImportIndicator() {
                                         {progressPct}%
                                         {totalTracks > 0 ? ` · Track ${currentTrack}/${totalTracks}` : ''}
                                     </p>
+                                )}
+                                {importStatus === 'completed' && (
+                                    <a
+                                        href="/library"
+                                        onClick={e => e.stopPropagation()}
+                                        className="text-[10px] text-green-400 hover:text-green-300 mt-0.5 leading-none transition-colors"
+                                    >
+                                        Go to Library →
+                                    </a>
                                 )}
                             </div>
 

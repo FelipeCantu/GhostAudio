@@ -1,13 +1,9 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
+from django.urls import path
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
 from . import views
-
-router = DefaultRouter()
-router.register(r'library', views.AlbumViewSet, basename='library')
 
 urlpatterns = [
     # Auth
@@ -32,7 +28,4 @@ urlpatterns = [
     path('mongo/library/', views.mongo_library, name='mongo_library'),
     path('mongo/library/<str:album_id>/', views.mongo_delete_album, name='mongo_delete_album'),
     path('mongo/stats/', views.mongo_stats, name='mongo_stats'),
-
-    # Library API
-    path('', include(router.urls)),
 ]

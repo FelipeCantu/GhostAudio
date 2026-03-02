@@ -143,7 +143,7 @@ export const api = {
                 });
             }
             // Always use Cloud API for Library
-            const res = await fetch(`${NEXT_API_URL}/api/library/`, {
+            const res = await fetch(`${NEXT_API_URL}/api/mongo/library/?user_id=${mongoUserId}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (!res.ok) throw new Error("Failed to fetch library");
