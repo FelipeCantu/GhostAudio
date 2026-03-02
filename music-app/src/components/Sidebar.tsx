@@ -1,11 +1,13 @@
 "use client";
 
 import { useAuth } from "@/context/AuthContext";
+import { usePlaylist } from "@/context/PlaylistContext";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
-import { Home, Disc, Library, LogOut, User, Settings as SettingsIcon, X } from "lucide-react";
+import { Home, Disc, Library, LogOut, User, Settings as SettingsIcon, X, Plus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import PlaylistCoverArt from "@/components/PlaylistCoverArt";
 
 interface SidebarProps {
     isOpen: boolean;
@@ -14,6 +16,7 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     const { user, logout } = useAuth();
+    const { playlists } = usePlaylist();
     const pathname = usePathname();
 
     const links = [
@@ -66,26 +69,65 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex-1 px-4 py-8 space-y-2">
-                    {links.map((link) => {
-                        const Icon = link.icon;
-                        const active = isActive(link.href);
+                <nav className="flex-1 px-4 py-6 flex flex-col min-h-0">
+                    <div className="space-y-2">
+                        {links.map((link) => {
+                            const Icon = link.icon;
+                            const active = isActive(link.href);
 
-                        return (
+                            return (
+                                <Link
+                                    key={link.href}
+                                    href={link.href}
+                                    className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group ${active
+                                        ? "bg-[#f4d35e]/10 text-[#f4d35e] border border-[#f4d35e]/20 shadow-[0_0_15px_rgba(244,211,94,0.1)]"
+                                        : "text-zinc-400 hover:text-white hover:bg-white/5"
+                                        }`}
+                                >
+                                    <Icon size={20} className={active ? "text-[#f4d35e]" : "group-hover:text-white transition-colors"} />
+                                    <span className="font-medium">{link.name}</span>
+                                </Link>
+                            );
+                        })}
+                    </div>
+
+                    {/* Playlists Section */}
+                    <div className="mt-6 border-t border-white/5 pt-5 flex flex-col min-h-0 flex-1">
+                        <div className="flex items-center justify-between mb-3 px-1">
+                            <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">Playlists</span>
                             <Link
-                                key={link.href}
-                                href={link.href}
-                                className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group ${active
-                                    ? "bg-[#f4d35e]/10 text-[#f4d35e] border border-[#f4d35e]/20 shadow-[0_0_15px_rgba(244,211,94,0.1)]"
-                                    : "text-zinc-400 hover:text-white hover:bg-white/5"
-                                    }`}
+                                href="/playlists/new"
+                                className="p-1 rounded-lg text-zinc-500 hover:text-white hover:bg-white/10 transition-colors"
+                                title="New playlist"
                             >
-                                <Icon size={20} className={active ? "text-[#f4d35e]" : "group-hover:text-white transition-colors"} />
-                                <span className="font-medium">{link.name}</span>
+                                <Plus size={16} />
                             </Link>
-                        );
-                    })}
+                        </div>
+
+                        <div className="overflow-y-auto flex-1 space-y-0.5 pr-1 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
+                            {playlists.map((pl) => {
+                                const active = pathname === `/playlists/${pl.id}`;
+                                return (
+                                    <Link
+                                        key={pl.id}
+                                        href={`/playlists/${pl.id}`}
+                                        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all group ${active ? 'bg-[#f4d35e]/10 text-[#f4d35e]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+                                    >
+                                        <PlaylistCoverArt coverArts={pl.cover_arts || []} size={32} />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium truncate">{pl.name}</p>
+                                            <p className="text-xs text-zinc-600 truncate">{pl.item_count} tracks</p>
+                                        </div>
+                                    </Link>
+                                );
+                            })}
+                            {playlists.length === 0 && (
+                                <p className="text-xs text-zinc-600 px-3 py-2">No playlists yet.</p>
+                            )}
+                        </div>
+                    </div>
                 </nav>
+
 
                 {/* User Profile */}
                 <div className="p-4 border-t border-white/5">

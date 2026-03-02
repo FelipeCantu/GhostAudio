@@ -14,6 +14,8 @@ musicbrainzngs
 pymongo
 dnspython
 python-dotenv
+boto3
+bcrypt
 # Build & Serve
 pyinstaller
 waitress

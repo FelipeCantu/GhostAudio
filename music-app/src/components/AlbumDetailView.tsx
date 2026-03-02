@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { ArrowLeft, Disc, Play, Pause, Clock } from "lucide-react";
+import { ArrowLeft, Disc, Play, Pause, Clock, ListPlus, Check } from "lucide-react";
 import { usePlayer } from "@/context/PlayerContext";
-import { Album, Track } from "@/services/api";
+import { usePlaylist } from "@/context/PlaylistContext";
+import { Album, Track, PlaylistItem } from "@/services/api";
 
 interface AlbumDetailViewProps {
     album: Album;
@@ -13,7 +14,21 @@ interface AlbumDetailViewProps {
 
 export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps) {
     const { currentTrack, isPlaying, playTrack } = usePlayer();
+    const { playlists, addItemsToPlaylist } = usePlaylist();
     const [imgError, setImgError] = useState(false);
+    const [showPlaylistMenu, setShowPlaylistMenu] = useState(false);
+    const [addedToast, setAddedToast] = useState<string | null>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setShowPlaylistMenu(false);
+            }
+        };
+        if (showPlaylistMenu) document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showPlaylistMenu]);
 
     if (!album) return null;
 
@@ -42,6 +57,28 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
 
     const handlePlayTrack = (track: Track) => {
         playTrack(track, tracks, albumInfo);
+    };
+
+    const buildPlaylistItems = (): PlaylistItem[] => {
+        const albumId = (album as any)._id || String(album.id);
+        return tracks.map(t => ({
+            albumId,
+            trackNumber: t.track_number,
+            title: t.title,
+            artist: album.artist,
+            albumTitle: album.title,
+            audioFile: (t as any).audioFile || t.audio_file || '',
+            duration: t.duration || '',
+            coverArt: coverArt || '',
+        }));
+    };
+
+    const handleAddToPlaylist = async (playlistId: string, playlistName: string) => {
+        setShowPlaylistMenu(false);
+        const items = buildPlaylistItems();
+        await addItemsToPlaylist(playlistId, items);
+        setAddedToast(`Added ${items.length} tracks to "${playlistName}"`);
+        setTimeout(() => setAddedToast(null), 3000);
     };
 
     const handlePlayAll = () => {
@@ -112,7 +149,7 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                         <span className="text-zinc-400">{tracks.length} tracks</span>
                     </div>
 
-                    <div className="flex items-center gap-4 justify-center md:justify-start">
+                    <div className="flex items-center gap-4 justify-center md:justify-start flex-wrap">
                         <button
                             onClick={handlePlayAll}
                             className="flex items-center gap-3 px-8 py-4 bg-primary text-primary-foreground font-bold rounded-full hover:bg-primary/90 hover:scale-105 transition-all shadow-lg shadow-primary/25"
@@ -120,6 +157,37 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                             <Play size={24} fill="currentColor" />
                             Play Album
                         </button>
+
+                        {/* Add to Playlist */}
+                        <div className="relative" ref={menuRef}>
+                            <button
+                                onClick={() => setShowPlaylistMenu(v => !v)}
+                                className="p-4 rounded-full bg-white/5 text-white hover:bg-white/10 transition-colors border border-white/5"
+                                title="Add album to playlist"
+                            >
+                                <ListPlus size={24} />
+                            </button>
+                            {showPlaylistMenu && (
+                                <div className="absolute top-full left-0 mt-2 w-56 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden">
+                                    <div className="px-3 py-2 text-xs font-bold uppercase tracking-wider text-zinc-500 border-b border-white/5">Add to playlist</div>
+                                    {playlists.filter(p => !p.is_smart).length === 0 ? (
+                                        <p className="px-4 py-3 text-sm text-zinc-500">No manual playlists.</p>
+                                    ) : (
+                                        playlists.filter(p => !p.is_smart).map(pl => (
+                                            <button
+                                                key={pl.id}
+                                                onClick={() => handleAddToPlaylist(pl.id, pl.name)}
+                                                className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
+                                            >
+                                                <ListPlus size={14} className="text-zinc-500" />
+                                                {pl.name}
+                                            </button>
+                                        ))
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
                         <button className="p-4 rounded-full bg-white/5 text-white hover:bg-white/10 transition-colors border border-white/5">
                             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" /></svg>
                         </button>
@@ -127,6 +195,14 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></svg>
                         </button>
                     </div>
+
+                    {/* Toast */}
+                    {addedToast && (
+                        <div className="flex items-center gap-2 mt-3 text-sm text-[#f4d35e] animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            <Check size={14} />
+                            {addedToast}
+                        </div>
+                    )}
                 </div>
             </div>
 
