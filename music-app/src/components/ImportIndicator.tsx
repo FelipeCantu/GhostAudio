@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { usePathname } from "next/navigation";
 import { useImport } from "@/context/ImportContext";
 
 export default function ImportIndicator() {
@@ -17,11 +16,8 @@ export default function ImportIndicator() {
         resetImport,
     } = useImport();
 
-    const pathname = usePathname();
     const [visible, setVisible] = useState(false);
     const [expanded, setExpanded] = useState(false);
-
-    if (pathname === "/import") return null;
 
     useEffect(() => {
         if (importStatus === 'ripping') {

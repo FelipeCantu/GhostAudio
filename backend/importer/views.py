@@ -348,17 +348,26 @@ def rip_cd(request):
 @csrf_exempt
 def rip_cd_stream(request):
     """Streaming rip CD endpoint with real-time progress updates"""
+    from pathlib import Path as _Path
+    _dbg = _Path(os.path.expanduser('~')) / 'ghost_app_debug.log'
+    with open(_dbg, 'a') as _f:
+        _f.write(f"\n[{datetime.now()}] rip_cd_stream called: method={request.method}\n")
+
     if request.method != 'POST':
         return JsonResponse({'error': 'POST required'}, status=405)
 
     try:
         data = json.loads(request.body)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        with open(_dbg, 'a') as _f:
+            _f.write(f"[{datetime.now()}] rip_cd_stream JSON parse error: {e}\n")
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
     drive = data.get('drive_path')
     metadata = data.get('metadata')
     mongo_user_id = data.get('mongo_user_id')
+    with open(_dbg, 'a') as _f:
+        _f.write(f"[{datetime.now()}] rip_cd_stream parsed: drive={drive}, user={mongo_user_id}, meta_keys={list(metadata.keys()) if metadata else None}\n")
 
     # Generate a unique session ID for cancellation support
     session_id = str(uuid.uuid4())

@@ -46,16 +46,56 @@ const initialState: ImportState = {
     importMetadata: null,
 };
 
+const STORAGE_KEY = 'ghost_import_state';
+
+function loadPersistedState(): ImportState | null {
+    try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (!saved) return null;
+        const parsed = JSON.parse(saved);
+        if (parsed.importStatus === 'ripping') return parsed as ImportState;
+    } catch {}
+    return null;
+}
+
+function savePersistedState(state: ImportState) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+}
+
+function clearPersistedState() {
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+}
+
 const ImportContext = createContext<ImportContextType | undefined>(undefined);
 
 export function ImportProvider({ children }: { children: React.ReactNode }) {
-    const [state, setState] = useState<ImportState>(initialState);
-    // Use a ref for session ID so cancelImport always sees the latest value
-    // without needing it in its dependency array
-    const sessionIdRef = useRef<string | null>(null);
+    // Lazy initializer: restore in-progress state immediately on first render so
+    // the indicator appears without a flash when the page is reloaded in packaged mode.
+    const [state, setState] = useState<ImportState>(() => {
+        if (typeof window !== 'undefined') {
+            const persisted = loadPersistedState();
+            if (persisted) return persisted;
+        }
+        return initialState;
+    });
+    const sessionIdRef = useRef<string | null>(
+        typeof window !== 'undefined' ? (() => {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) return (JSON.parse(saved) as ImportState).ripSessionId ?? null;
+            } catch {}
+            return null;
+        })() : null
+    );
+    const cancelledRef = useRef<boolean>(false);
+    // Tracks whether startImport() is currently awaiting an IPC response.
+    // Used to avoid double-completion when the user navigated away and handleProgress
+    // handles type:'complete' instead of startImport.
+    const startImportActiveRef = useRef<boolean>(false);
 
-    // Register the rip-progress listener once for the app's entire lifetime.
-    // This survives page navigation so imports continue uninterrupted.
+    // Register the rip-progress listener once. Also restores in-progress import state
+    // from localStorage so the indicator survives page navigation in the packaged app
+    // (static export reloads the full HTML on every route change, unlike the dev server).
     useEffect(() => {
         if (typeof window === 'undefined' || !api.isElectron()) return;
         if (!(window as any).electronAPI?.on) return;
@@ -70,10 +110,8 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
                     const next: ImportState = { ...prev, message: data.message };
 
                     if (data.stage === 'cancelled') {
-                        return {
-                            ...initialState,
-                            message: 'Import cancelled.',
-                        };
+                        clearPersistedState();
+                        return { ...initialState, message: 'Import cancelled.' };
                     }
 
                     if (data.stage === 'reading' || data.stage === 'track_progress') {
@@ -110,6 +148,46 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
                     return next;
                 });
 
+            } else if (data.type === 'complete') {
+                // Only handle completion here when startImport is NOT actively running
+                // (i.e. the user navigated away from the import page in packaged mode).
+                // When startImport is active, it handles the completion itself.
+                // Also guard against a spurious 'complete' that always follows a cancel.
+                if (!startImportActiveRef.current) {
+                    setState(prev => {
+                        if (prev.importStatus !== 'ripping') return prev; // cancelled already reset state
+                        const allDone: Record<string, TrackStatus> = {};
+                        for (const k of Object.keys(prev.trackStatuses)) {
+                            allDone[k] = { status: 'done', percent: 100 };
+                        }
+                        return {
+                            ...prev,
+                            importStatus: 'completed',
+                            message: `"${prev.importMetadata?.album || 'Album'}" by ${prev.importMetadata?.artist || 'Unknown Artist'} has been added to your library!`,
+                            currentTrack: prev.totalTracks,
+                            trackStatuses: allDone,
+                        };
+                    });
+                    clearPersistedState();
+                    sessionIdRef.current = null;
+                }
+
+            } else if (data.type === 'error') {
+                if (!startImportActiveRef.current) {
+                    setState(prev => {
+                        if (prev.importStatus !== 'ripping') return prev;
+                        return {
+                            ...prev,
+                            importStatus: 'error',
+                            message: `Import failed: ${data.message}`,
+                            trackStatuses: {},
+                            ripSessionId: null,
+                        };
+                    });
+                    clearPersistedState();
+                    sessionIdRef.current = null;
+                }
+
             } else if (data.type === 'saved') {
                 setState(prev => ({ ...prev, message: 'Saved to library!' }));
 
@@ -124,6 +202,15 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
             (window as any).electronAPI?.removeAllListeners?.('rip-progress');
         };
     }, []);
+
+    // Persist ripping state to localStorage so it survives page reloads
+    useEffect(() => {
+        if (state.importStatus === 'ripping') {
+            savePersistedState(state);
+        } else {
+            clearPersistedState();
+        }
+    }, [state]);
 
     const startImport = useCallback(async (args: {
         drive_path: string;
@@ -140,6 +227,9 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
             }
         }
 
+        cancelledRef.current = false;
+        startImportActiveRef.current = true;
+
         setState({
             importStatus: 'ripping',
             message: `Preparing to import ${trackCount} tracks...`,
@@ -155,7 +245,11 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
         try {
             const data = await api.system.ripCd(args);
 
-            if (data.status === 'started' || data.status === 'completed') {
+            if (cancelledRef.current) return;
+
+            if (data.status === 'error') {
+                throw new Error(data.message || 'Import failed');
+            } else if (data.status === 'started' || data.status === 'completed') {
                 setState(prev => {
                     const allDone: Record<string, TrackStatus> = {};
                     for (const k of Object.keys(prev.trackStatuses)) {
@@ -180,23 +274,29 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
                         trackStatuses: {},
                         ripSessionId: null,
                     }));
+                    clearPersistedState();
                     sessionIdRef.current = null;
                 }, 1500);
             } else {
-                throw new Error('Import failed');
+                throw new Error(data.message || 'Import failed');
             }
         } catch (err: any) {
-            setState(prev => ({
-                ...prev,
-                importStatus: 'error',
-                message: `Import failed: ${err.message || JSON.stringify(err)}`,
-                currentTrack: 0,
-                totalTracks: 0,
-                overallPercent: 0,
-                trackStatuses: {},
-                ripSessionId: null,
-            }));
-            sessionIdRef.current = null;
+            if (!cancelledRef.current) {
+                setState(prev => ({
+                    ...prev,
+                    importStatus: 'error',
+                    message: `Import failed: ${err.message || JSON.stringify(err)}`,
+                    currentTrack: 0,
+                    totalTracks: 0,
+                    overallPercent: 0,
+                    trackStatuses: {},
+                    ripSessionId: null,
+                }));
+                clearPersistedState();
+                sessionIdRef.current = null;
+            }
+        } finally {
+            startImportActiveRef.current = false;
         }
     }, []);
 
@@ -209,13 +309,16 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
                 console.error('[ImportContext] Cancel error:', err);
             }
         }
+        cancelledRef.current = true;
         setState({ ...initialState, message: 'Import cancelled.' });
         sessionIdRef.current = null;
+        clearPersistedState();
     }, []);
 
     const resetImport = useCallback(() => {
         setState(initialState);
         sessionIdRef.current = null;
+        clearPersistedState();
     }, []);
 
     return (

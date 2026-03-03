@@ -33,6 +33,8 @@ export default function CDImporter() {
     const [isScanning, setIsScanning] = useState(false);
     const [localMessage, setLocalMessage] = useState("");
     const [ffmpegMissing, setFfmpegMissing] = useState(false);
+    const [isConnecting, setIsConnecting] = useState(false);
+    const [connectFailed, setConnectFailed] = useState(false);
 
     // Check if we are in Electron environment
     const [isDesktop, setIsDesktop] = useState(false);
@@ -93,8 +95,43 @@ export default function CDImporter() {
     };
 
     useEffect(() => {
-        scanDrives();
-        checkSystem();
+        if (!api.isElectron()) {
+            scanDrives();
+            checkSystem();
+            return;
+        }
+
+        // In the packaged app the backend exe starts after the UI loads and can
+        // take 10-20s to decompress and initialise. Poll until it responds rather
+        // than hitting the user with a silent connection error.
+        setIsConnecting(true);
+        setConnectFailed(false);
+        let cancelled = false;
+        let attempts = 0;
+        const MAX_ATTEMPTS = 20; // ~30 s at 1.5 s intervals
+
+        const tryConnect = async () => {
+            if (cancelled) return;
+            try {
+                const sys = await api.system.getSystemStatus();
+                if (cancelled) return;
+                setIsConnecting(false);
+                setFfmpegMissing(!sys.ffmpeg_found);
+                scanDrives();
+            } catch {
+                if (cancelled) return;
+                attempts++;
+                if (attempts >= MAX_ATTEMPTS) {
+                    setIsConnecting(false);
+                    setConnectFailed(true);
+                } else {
+                    setTimeout(tryConnect, 1500);
+                }
+            }
+        };
+
+        tryConnect();
+        return () => { cancelled = true; };
     }, []);
 
     useEffect(() => {
@@ -165,6 +202,36 @@ const fetchMetadata = async (drive: string) => {
     // Kick off the import via the global ImportContext.
     // The context owns the rip-progress listener so navigation away from this
     // page will NOT stop the import.
+    const retryConnect = () => {
+        setConnectFailed(false);
+        setIsConnecting(true);
+        let cancelled = false;
+        let attempts = 0;
+        const MAX_ATTEMPTS = 20;
+
+        const tryConnect = async () => {
+            if (cancelled) return;
+            try {
+                const sys = await api.system.getSystemStatus();
+                if (cancelled) return;
+                setIsConnecting(false);
+                setFfmpegMissing(!sys.ffmpeg_found);
+                scanDrives();
+            } catch {
+                if (cancelled) return;
+                attempts++;
+                if (attempts >= MAX_ATTEMPTS) {
+                    setIsConnecting(false);
+                    setConnectFailed(true);
+                } else {
+                    setTimeout(tryConnect, 1500);
+                }
+            }
+        };
+
+        tryConnect();
+    };
+
     const startRip = () => {
         if (!selectedDrive) return;
         if (isEditingMetadata) setIsEditingMetadata(false);
@@ -254,19 +321,53 @@ const fetchMetadata = async (drive: string) => {
                         <div className="space-y-3">
                             <div className="flex justify-between items-center px-1">
                                 <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Target Source</label>
-                                <button
-                                    onClick={() => scanDrives()}
-                                    disabled={status === "scanning" || status === "ripping"}
-                                    className="text-xs font-medium text-border hover:text-primary transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                                >
-                                    {status === "scanning" && (
-                                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                    )}
-                                    {status === "scanning" ? "Scanning..." : "Refresh Devices"}
-                                </button>
+                                {!isConnecting && !connectFailed && (
+                                    <button
+                                        onClick={() => scanDrives()}
+                                        disabled={status === "scanning" || status === "ripping"}
+                                        className="text-xs font-medium text-border hover:text-primary transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                                    >
+                                        {status === "scanning" && (
+                                            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                        )}
+                                        {status === "scanning" ? "Scanning..." : "Refresh Devices"}
+                                    </button>
+                                )}
                             </div>
 
-                            {drives.length === 0 ? (
+                            {isConnecting ? (
+                                <div className="flex flex-col items-center justify-center py-10 gap-3">
+                                    <div className="relative flex h-9 w-9 items-center justify-center">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#f4d35e] opacity-20" />
+                                        <span className="relative inline-flex h-9 w-9 rounded-full bg-zinc-800 border border-zinc-700 items-center justify-center">
+                                            <svg className="w-4 h-4 animate-spin text-[#f4d35e]" viewBox="0 0 24 24" fill="none">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                            </svg>
+                                        </span>
+                                    </div>
+                                    <div className="text-center">
+                                        <p className="text-sm font-medium text-zinc-300">Connecting to backend...</p>
+                                        <p className="text-xs text-zinc-600 mt-1">Starting audio engine, this takes a moment</p>
+                                    </div>
+                                </div>
+                            ) : connectFailed ? (
+                                <div className="flex flex-col items-center justify-center py-10 gap-3 rounded-xl bg-red-500/5 border border-red-500/15">
+                                    <svg className="w-8 h-8 text-red-400/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <div className="text-center">
+                                        <p className="text-sm font-medium text-red-300">Backend failed to start</p>
+                                        <p className="text-xs text-zinc-500 mt-1">The audio engine did not respond in time</p>
+                                    </div>
+                                    <button
+                                        onClick={retryConnect}
+                                        className="text-xs font-semibold px-4 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors"
+                                    >
+                                        Retry
+                                    </button>
+                                </div>
+                            ) : drives.length === 0 ? (
                                 <motion.div
                                     whileHover={{ scale: 1.02 }}
                                     whileTap={{ scale: 0.98 }}
@@ -556,10 +657,10 @@ const fetchMetadata = async (drive: string) => {
                             </motion.button>
                         ) : (
                             <motion.button
-                                whileHover={!(!selectedDrive || status === "ripping" || status === "scanning") ? { scale: 1.02 } : {}}
-                                whileTap={!(!selectedDrive || status === "ripping" || status === "scanning") ? { scale: 0.98 } : {}}
+                                whileHover={!(!selectedDrive || status === "ripping" || status === "scanning" || isConnecting || connectFailed) ? { scale: 1.02 } : {}}
+                                whileTap={!(!selectedDrive || status === "ripping" || status === "scanning" || isConnecting || connectFailed) ? { scale: 0.98 } : {}}
                                 onClick={startRip}
-                                disabled={!selectedDrive || status === "ripping" || status === "scanning"}
+                                disabled={!selectedDrive || status === "ripping" || status === "scanning" || isConnecting || connectFailed}
                                 className={cn(
                                     "w-full py-4 px-6 rounded-xl font-bold shadow-lg shadow-black/20 transition-all flex items-center justify-center gap-2.5",
                                     status === "ripping"

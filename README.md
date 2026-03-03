@@ -13,16 +13,19 @@
 ## Key Features
 
 ### CD Ripping
-Insert a disc, fetch metadata automatically from MusicBrainz, and rip tracks in lossless quality. The Python/Django backend handles optical drive communication and real-time per-track progress is streamed back to the UI.
+Insert a disc, fetch metadata automatically from MusicBrainz, and rip tracks in lossless quality. The Python/Django backend handles optical drive communication via ffmpeg (`libcdio`) and streams real-time per-track progress back to the UI over SSE. The desktop app polls for backend readiness on startup so you always get a clean "Connecting..." state instead of a silent error while the audio engine initialises.
 
 ### Local File Import
 Import existing MP3, FLAC, WAV, and M4A files from your machine into your library with full metadata and cover art support.
 
 ### Cloud Audio Streaming (Cloudflare R2)
-Ripped and imported tracks automatically upload to Cloudflare R2 object storage. Once uploaded, your tracks are available to stream from the web app on any device — no local files required.
+Ripped and imported tracks automatically upload to Cloudflare R2 object storage. Once uploaded, your tracks are available to stream from the web app on any device — no local files required. R2 is optional; the app gracefully falls back to local file paths when credentials are not configured.
 
 ### Unified Account (Desktop + Web)
 One account works everywhere. Auth is backed by MongoDB so your desktop and web sessions share the same user ID, library, and playlists.
+
+### Persistent Import Progress
+A floating import indicator sits in the top-right corner of every page while a rip is in progress. Because the packaged desktop app uses static export (full-page reloads on navigation), import state is persisted to `localStorage` so the indicator and progress survive navigating away mid-import. Cancel also works correctly after navigation because the rip session ID is restored from storage.
 
 ### Library & Album Browsing
 Browse your collection by album with cover art fetched from the Cover Art Archive. Delete albums you no longer want.
@@ -47,7 +50,9 @@ Queue, skip, seek, volume, and persistent queue that survives navigation within 
 |---|---|
 | Desktop shell | Electron |
 | Frontend | Next.js 15 (App Router), React, TypeScript, Tailwind CSS |
-| Backend | Django 5, Django REST Framework, Gunicorn |
+| Backend | Django 5, Django REST Framework |
+| WSGI server | Waitress (desktop exe) · Gunicorn (Railway) |
+| Desktop bundling | PyInstaller (`ghost_backend.spec`) |
 | Database | MongoDB Atlas (PyMongo) |
 | Auth | Custom JWT (pyjwt + bcrypt), shared between desktop and web |
 | Audio storage | Cloudflare R2 (S3-compatible, via boto3) |
@@ -64,10 +69,11 @@ GhostRepo/
 ├── backend/                  # Django REST API
 │   ├── config/               # Settings, URLs, WSGI
 │   ├── importer/             # Views, CD ripping, R2 upload, playlists
-│   │   ├── views.py          # All API endpoints
+│   │   ├── views.py          # All API endpoints + SSE streaming
 │   │   ├── services.py       # CDRipper class (ffmpeg wrapper)
 │   │   └── cd_metadata.py    # MusicBrainz TOC lookup
 │   ├── bin/                  # Bundled ffmpeg.exe
+│   ├── ghost_backend.spec    # PyInstaller spec (bundles exe for desktop)
 │   ├── requirements.txt
 │   ├── Procfile              # Railway deployment
 │   └── runtime.txt           # python-3.12
@@ -75,13 +81,14 @@ GhostRepo/
     ├── electron/
     │   ├── main.js           # Electron main process + IPC handlers
     │   ├── preload.js        # Secure context bridge
-    │   └── services.js       # Fetch wrappers for the Django API
+    │   └── services.js       # Fetch/SSE wrappers for the Django API
     └── src/
         ├── app/
         │   ├── dashboard/    # Main library view
         │   └── playlists/    # Playlist detail pages
         ├── components/
-        │   ├── CDImporter.tsx
+        │   ├── CDImporter.tsx        # CD rip UI with per-track progress
+        │   ├── ImportIndicator.tsx   # Floating import progress pill (all pages)
         │   ├── AlbumCard.tsx
         │   ├── AlbumDetailView.tsx
         │   ├── Sidebar.tsx
@@ -91,6 +98,7 @@ GhostRepo/
         │   └── CreatePlaylistModal.tsx
         ├── context/
         │   ├── AuthContext.tsx
+        │   ├── ImportContext.tsx     # Global import state (localStorage-persisted)
         │   ├── PlayerContext.tsx
         │   └── PlaylistContext.tsx
         └── services/
@@ -114,13 +122,19 @@ All endpoints prefixed with `/api/`.
 | Method | Path | Description |
 |---|---|---|
 | GET | `mongo/library/` | List albums for a user |
-| DELETE | `mongo/albums/<id>/` | Delete an album |
+| DELETE | `mongo/library/<id>/` | Delete an album |
 
 ### CD Ripping
 | Method | Path | Description |
 |---|---|---|
-| GET | `cd-metadata/` | Fetch disc metadata from MusicBrainz |
-| GET | `rip/stream/` | SSE stream — rip CD with live progress |
+| POST | `metadata/` | Fetch disc metadata from MusicBrainz |
+| POST | `rip/stream/` | SSE stream — rip CD with live progress |
+| POST | `rip/cancel/` | Cancel an active rip session |
+
+### System
+| Method | Path | Description |
+|---|---|---|
+| GET | `system/check/` | Health check — confirms backend and ffmpeg are ready |
 
 ### Playlists
 | Method | Path | Description |
@@ -207,7 +221,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 
 1. Connect the repo to Railway, set the root to `backend/`.
 2. Add environment variables: `MONGODB_URI`, `JWT_SECRET`, `R2_*` keys.
-3. Railway picks up `Procfile` automatically and runs gunicorn.
+3. Railway picks up `Procfile` automatically and runs Gunicorn.
 
 ### Web → Vercel
 
@@ -217,12 +231,25 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 
 ### Desktop Installer
 
+The packaged desktop app bundles the Django backend into a single `ghost_backend.exe` using PyInstaller, then wraps everything with Electron Builder.
+
+**Step 1 — Build the backend exe**
+
 ```bash
-cd music-app
-ELECTRON_BUILD=true npm run dist
+cd backend
+venv/Scripts/python -m PyInstaller ghost_backend.spec --clean
 ```
 
-`ELECTRON_BUILD=true` enables Next.js static export mode required for Electron's file-based page serving.
+This outputs `backend/dist/ghost_backend.exe`. The spec uses `collect_all` for boto3, botocore, and s3transfer to ensure Cloudflare R2 uploads work correctly in the bundled exe.
+
+**Step 2 — Build and package the Electron app**
+
+```bash
+cd music-app
+npm run dist
+```
+
+`ELECTRON_BUILD=true` (set by the `dist` script) enables Next.js static export mode required for Electron's file-based page serving. The final installer is output to `music-app/dist/`.
 
 ---
 

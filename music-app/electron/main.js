@@ -84,6 +84,17 @@ if (!gotTheLock) {
           return net.fetch('file:///' + indexPath);
         }
 
+        // Fallback: serve the static placeholder for dynamic routes
+        // e.g. /playlists/{any-id} → out/playlists/_.html
+        const segments = reqPath.split('/').filter(Boolean);
+        if (segments.length >= 2) {
+          const parentDir = path.join(__dirname, '../out', segments[0]);
+          const placeholderHtml = path.join(parentDir, '_.html');
+          if (fs.existsSync(placeholderHtml)) {
+            return net.fetch('file:///' + placeholderHtml);
+          }
+        }
+
         console.error(`File not found: ${reqPath}`);
         return net.fetch('file:///' + filePath);
       });

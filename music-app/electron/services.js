@@ -240,6 +240,7 @@ const Services = {
 
             let lastProgress = null;
             let settled = false;  // Track whether promise has been resolved/rejected
+            let sseBuffer = '';   // Buffer for partial SSE lines across chunks
 
             request.on('response', (response) => {
                 console.log(`[Electron ripCD] Response status: ${response.statusCode}`);
@@ -257,9 +258,12 @@ const Services = {
                 }
 
                 response.on('data', (chunk) => {
-                    const text = chunk.toString();
-                    // Parse SSE format: "data: {...}\n\n"
-                    const lines = text.split('\n');
+                    // Append to buffer and split on newlines — handles partial SSE events
+                    // that span multiple TCP chunks (would otherwise silently drop events).
+                    sseBuffer += chunk.toString();
+                    const lines = sseBuffer.split('\n');
+                    sseBuffer = lines.pop(); // keep incomplete trailing line for next chunk
+
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             try {
@@ -281,7 +285,7 @@ const Services = {
                                     reject(new Error(data.message));
                                 }
                             } catch (parseErr) {
-                                // Ignore parse errors for partial chunks
+                                // ignore malformed lines
                             }
                         }
                     }

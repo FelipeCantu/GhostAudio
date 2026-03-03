@@ -71,7 +71,14 @@ try:
         print("Backend ready! Check logs at: " + str(log_file))
 
         try:
-            serve(application, host='127.0.0.1', port=8000)
+            serve(
+            application,
+            host='127.0.0.1',
+            port=8000,
+            send_bytes=0,        # Disable output buffering — required for SSE streaming
+            channel_timeout=3600, # 1 hour timeout — allows long CD rips to complete
+            threads=8,            # Handle concurrent requests during active streaming
+        )
         except Exception as serve_error:
             logger.error(f"Waitress server failed: {serve_error}", exc_info=True)
             raise

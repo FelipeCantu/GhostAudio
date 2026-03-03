@@ -16,7 +16,7 @@ else:
 logger = logging.getLogger(__name__)
 
 # Configure MusicBrainz
-musicbrainzngs.set_useragent("GhostAudio", "0.1", "http://localhost")
+musicbrainzngs.set_useragent("GhostAudio", "0.1", "https://github.com/ghost-audio")
 
 def send_mci_command(command_str):
     """Send an MCI command string to winmm.dll"""
@@ -386,8 +386,34 @@ def get_release_info(drive_letter):
             "cover_art": None
         }
     except Exception as e:
-        logger.error(f"Unexpected error during metadata lookup: {e}")
-        return {"error": f"Lookup error: {str(e)}", "disc_id": disc_id}
+        logger.warning(f"MusicBrainz lookup failed ({type(e).__name__}: {e}), trying TOC fuzzy search...")
+
+        # Try TOC-based fuzzy lookup as fallback
+        try:
+            toc_result = lookup_by_toc(first, last, lead_out, offsets)
+            if toc_result:
+                return toc_result
+        except Exception as toc_err:
+            logger.warning(f"TOC fuzzy lookup also failed: {toc_err}")
+
+        # Return basic track info from TOC as final fallback
+        basic_tracks = []
+        for i in range(first, last + 1):
+            basic_tracks.append({
+                'track_number': str(i),
+                'title': f'Track {i}',
+                'artist': 'Unknown Artist',
+                'duration_ms': 0
+            })
+
+        return {
+            "error": f"Lookup error: {str(e)}",
+            "disc_id": disc_id,
+            "album": "Unknown Album",
+            "artist": "Unknown Artist",
+            "tracks": basic_tracks,
+            "cover_art": None
+        }
 
     return {"error": "No releases found in MusicBrainz", "disc_id": disc_id}
 
