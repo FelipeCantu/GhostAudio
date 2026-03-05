@@ -171,9 +171,7 @@ export const api = {
                 });
             }
             // Always use Cloud API for Library
-            const res = await fetch(`${NEXT_API_URL}/api/mongo/library/?user_id=${mongoUserId}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetch(`${NEXT_API_URL}/api/mongo/library/?user_id=${mongoUserId}`);
             if (!res.ok) throw new Error("Failed to fetch library");
             return await res.json();
         },
@@ -184,9 +182,7 @@ export const api = {
                     mongo_user_id: mongoUserId
                 });
             }
-            const res = await fetch(`${NEXT_API_URL}/api/dashboard/stats/`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetch(`${NEXT_API_URL}/api/dashboard/stats/?user_id=${mongoUserId}`);
             if (!res.ok) throw new Error("Failed to fetch dashboard stats");
             return await res.json();
         },
