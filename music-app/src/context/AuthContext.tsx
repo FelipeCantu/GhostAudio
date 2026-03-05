@@ -2,7 +2,6 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/services/api";
 
 interface User {
     id: string;
@@ -13,7 +12,7 @@ interface User {
 interface AuthContextType {
     user: User | null;
     token: string | null;
-    login: (token: string, refresh: string) => void;
+    login: (token: string, user: any) => void;
     logout: () => void;
     isAuthenticated: boolean;
     isLoading: boolean;
@@ -29,51 +28,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         // Load from localStorage on mount
-        const initAuth = async () => {
+        const initAuth = () => {
             const storedToken = localStorage.getItem("accessToken");
-            if (storedToken) {
+            const storedUser = localStorage.getItem("userData");
+            if (storedToken && storedUser) {
                 setToken(storedToken);
-                await fetchUser(storedToken);
-            } else {
-                setIsLoading(false);
+                setUser(JSON.parse(storedUser));
             }
+            setIsLoading(false);
         };
 
         initAuth();
     }, []);
 
-    const fetchUser = async (authToken: string) => {
-        try {
-            const userData = await api.auth.me(authToken);
-            if (userData && !userData.error) {
-                setUser(userData);
-            } else {
-                logout(false);
-            }
-        } catch (err) {
-            console.error("Failed to fetch user", err);
-            logout(false);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const login = (accessToken: string, refreshToken: string) => {
+    const login = (accessToken: string, userData: any) => {
         localStorage.setItem("accessToken", accessToken);
-        localStorage.setItem("refreshToken", refreshToken);
+        localStorage.setItem("userData", JSON.stringify(userData));
         setToken(accessToken);
-        // We can optimistically set loading to true while we fetch user details, 
-        // or just fetch user details and then route.
-        // For simplicity, let's just push to home. 
-        // But better to fetch user first.
-        fetchUser(accessToken).then(() => {
-            router.push("/app");
-        });
+        setUser(userData);
+        router.push("/app");
     };
 
     const logout = (redirect = true) => {
         localStorage.removeItem("accessToken");
-        localStorage.removeItem("refreshToken");
+        localStorage.removeItem("userData");
         setToken(null);
         setUser(null);
         if (redirect) {

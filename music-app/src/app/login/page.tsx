@@ -27,8 +27,7 @@ export default function LoginPage() {
 
             if (!data.error) {
                 setSuccess("Login successful! Redirecting...");
-                // @ts-ignore
-                login(data.access, data.refresh);
+                login(data.access, data.user);
             } else {
                 setError(data.error || "Login failed");
                 setIsLoading(false);
