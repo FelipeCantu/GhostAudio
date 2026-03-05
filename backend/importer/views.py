@@ -128,6 +128,7 @@ def mongo_auth_me(request):
 
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_upload_audio(request):
     user_id = request.data.get('user_id')
@@ -161,6 +162,7 @@ class UserDetailView(generics.RetrieveAPIView):
         return self.request.user
 
 @api_view(['GET'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def dashboard_stats(request):
     """
@@ -570,6 +572,7 @@ def cancel_rip(request):
 # --- MongoDB Direct Endpoints (for Desktop App) ---
 
 @api_view(['DELETE'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_delete_album(request, album_id):
     """Delete an album from MongoDB"""
@@ -606,6 +609,7 @@ def mongo_delete_album(request, album_id):
 
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_import_local(request):
     """Import local audio files to MongoDB"""
@@ -653,6 +657,7 @@ def mongo_import_local(request):
 
 
 @api_view(['GET'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_library(request):
     """Fetch library directly from MongoDB for desktop app"""
@@ -690,6 +695,7 @@ def mongo_library(request):
 
 
 @api_view(['GET'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_stats(request):
     """Fetch stats directly from MongoDB for desktop app"""
@@ -813,6 +819,7 @@ def _resolve_smart_rule(user_id, rule, albums_col):
 
 
 @api_view(['GET', 'POST'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_playlists(request):
     """List all playlists for a user (GET) or create a new one (POST)."""
@@ -865,6 +872,7 @@ def mongo_playlists(request):
 
 
 @api_view(['GET', 'PATCH', 'DELETE'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_playlist_detail(request, playlist_id):
     """Get, update, or delete a single playlist."""
@@ -910,6 +918,7 @@ def mongo_playlist_detail(request, playlist_id):
 
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_playlist_items(request, playlist_id):
     """Append items to a playlist."""
@@ -946,6 +955,7 @@ def mongo_playlist_items(request, playlist_id):
 
 
 @api_view(['DELETE'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_playlist_item_delete(request, playlist_id, item_index):
     """Remove a single item from a playlist by index."""
@@ -983,6 +993,7 @@ def mongo_playlist_item_delete(request, playlist_id, item_index):
 
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_playlist_refresh(request, playlist_id):
     """Re-run a smart playlist's rule and replace items."""
