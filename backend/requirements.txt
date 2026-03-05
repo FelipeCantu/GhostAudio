@@ -5,7 +5,7 @@ dj-database-url
 gunicorn
 # New Dependencies for Auth & DB
 djangorestframework
-djangorestframework-simplejwt
+PyJWT
 psycopg2-binary
 pillow
 # CD Metadata

@@ -117,11 +117,13 @@ def mongo_auth_login(request):
 def mongo_auth_me(request):
     auth = request.META.get('HTTP_AUTHORIZATION', '')
     if not auth.startswith('Bearer '):
+        logger.error(f"auth.me: no Bearer token. auth header='{auth[:30]}'")
         return Response({'error': 'No token'}, status=401)
     try:
         payload = pyjwt.decode(auth[7:], _JWT_SECRET, algorithms=['HS256'])
         return Response({'id': payload['id'], 'username': payload['username']})
-    except Exception:
+    except Exception as e:
+        logger.error(f"auth.me decode failed: {type(e).__name__}: {e} | key_len={len(_JWT_SECRET)} | token_prefix={auth[7:20]}")
         return Response({'error': 'Invalid token'}, status=401)
 
 
