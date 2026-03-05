@@ -18,7 +18,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_file, mode='w'),
+        logging.FileHandler(log_file, mode='a'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 logger.info("=" * 50)
 logger.info("Ghost Backend Starting...")
 logger.info(f"Log file: {log_file}")
+logger.info(f"MONGODB_URI set: {bool(os.environ.get('MONGODB_URI'))}")
+logger.info(f"R2_ACCOUNT_ID set: {bool(os.environ.get('R2_ACCOUNT_ID'))}")
+logger.info(f"JWT_SECRET set: {bool(os.environ.get('JWT_SECRET'))}")
 logger.info("=" * 50)
 
 print("=" * 50)

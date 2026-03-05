@@ -5,32 +5,41 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Disc } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { useImport } from "@/context/ImportContext";
 import { api, Album } from "@/services/api";
 import AlbumCard from "@/components/AlbumCard";
 import AlbumDetailView from "@/components/AlbumDetailView";
 
 export default function LibraryPage() {
     const { token, user } = useAuth();
+    const { importStatus } = useImport();
     const [albums, setAlbums] = useState<Album[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [selectedAlbum, setSelectedAlbum] = useState<any>(null);
 
-    useEffect(() => {
-        const loadAlbums = async () => {
-            if (!token) return;
-            try {
-                const data = await api.library.getAlbums(token, user?.id);
-                setAlbums(data);
-            } catch (err) {
-                setError("Failed to load your library.");
-            } finally {
-                setLoading(false);
-            }
-        };
+    const loadAlbums = async () => {
+        if (!token) return;
+        try {
+            const data = await api.library.getAlbums(token, user?.id);
+            setAlbums(data);
+        } catch (err) {
+            setError("Failed to load your library.");
+        } finally {
+            setLoading(false);
+        }
+    };
 
+    useEffect(() => {
         loadAlbums();
     }, [token, user?.id]);
+
+    // Refresh library automatically when an import finishes
+    useEffect(() => {
+        if (importStatus === 'completed') {
+            loadAlbums();
+        }
+    }, [importStatus]);
 
     const handleDeleteAlbum = async (albumId: string) => {
         try {

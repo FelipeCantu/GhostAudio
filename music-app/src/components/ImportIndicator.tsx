@@ -32,11 +32,7 @@ export default function ImportIndicator() {
             return () => clearTimeout(t);
         } else if (importStatus === 'error') {
             setVisible(true);
-            const t = setTimeout(() => {
-                setVisible(false);
-                resetImport();
-            }, 10000);
-            return () => clearTimeout(t);
+            setExpanded(true); // Auto-expand so the full message is visible
         } else {
             setVisible(false);
         }
@@ -200,12 +196,22 @@ export default function ImportIndicator() {
                                                     Go to Library
                                                 </a>
                                             )}
-                                            <button
-                                                onClick={() => setExpanded(false)}
-                                                className="text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors px-2"
-                                            >
-                                                Hide
-                                            </button>
+                                            {importStatus === 'error' && (
+                                                <button
+                                                    onClick={() => { setVisible(false); resetImport(); }}
+                                                    className="flex-1 text-xs font-semibold py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors"
+                                                >
+                                                    Dismiss
+                                                </button>
+                                            )}
+                                            {importStatus !== 'error' && (
+                                                <button
+                                                    onClick={() => setExpanded(false)}
+                                                    className="text-[11px] text-zinc-600 hover:text-zinc-400 transition-colors px-2"
+                                                >
+                                                    Hide
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 </motion.div>

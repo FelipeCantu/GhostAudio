@@ -37,7 +37,12 @@ def _get_r2_client():
         endpoint_url=f'https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com',
         aws_access_key_id=settings.R2_ACCESS_KEY_ID,
         aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
-        config=BotoConfig(signature_version='s3v4'),
+        config=BotoConfig(
+            signature_version='s3v4',
+            connect_timeout=10,
+            read_timeout=60,
+            retries={'max_attempts': 2},
+        ),
         region_name='auto',
     )
 
@@ -166,7 +171,7 @@ def dashboard_stats(request):
         return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})
 
     try:
-        client = MongoClient(settings.MONGODB_URI, serverSelectionTimeoutMS=3000)
+        client = MongoClient(settings.MONGODB_URI, serverSelectionTimeoutMS=20000)
         db = client.get_database()
         albums_collection = db['albums']
 
@@ -276,7 +281,7 @@ def rip_cd(request):
             try:
                 client = MongoClient(
                     settings.MONGODB_URI,
-                    serverSelectionTimeoutMS=5000,
+                    serverSelectionTimeoutMS=20000,
                     socketTimeoutMS=10000,
                     connectTimeoutMS=5000,
                 )
@@ -425,11 +430,13 @@ def rip_cd_stream(request):
             rip_thread.join()
 
             # After rip complete, save to MongoDB
+            with open(_dbg, 'a') as _f:
+                _f.write(f"[{datetime.now()}] Rip finished. tracks={len(result_holder['tracks'] or [])}, error={result_holder['error']}, user={mongo_user_id}, has_mongo_uri={bool(settings.MONGODB_URI)}\n")
             if result_holder['tracks'] and mongo_user_id and settings.MONGODB_URI:
                 try:
                     client = MongoClient(
                         settings.MONGODB_URI,
-                        serverSelectionTimeoutMS=5000,
+                        serverSelectionTimeoutMS=20000,
                         socketTimeoutMS=10000,
                         connectTimeoutMS=5000,
                     )
@@ -471,7 +478,11 @@ def rip_cd_stream(request):
                                 duration_str = f"{m:02d}:{s:02d}"
 
                         object_key = f"audio/{mongo_user_id}/{artist_name}/{album_title}/{os.path.basename(str(path))}"
+                        with open(_dbg, 'a') as _f:
+                            _f.write(f"[{datetime.now()}] Uploading track {track_num} to R2: {os.path.basename(str(path))}\n")
                         audio_url = _upload_to_r2(str(path), object_key)
+                        with open(_dbg, 'a') as _f:
+                            _f.write(f"[{datetime.now()}] Track {track_num} upload done: {audio_url[:60]}\n")
                         mongo_tracks.append({
                             'title': track_title,
                             'trackNumber': track_num,
@@ -489,9 +500,13 @@ def rip_cd_stream(request):
                     }
 
                     albums_collection.insert_one(new_album)
+                    with open(_dbg, 'a') as _f:
+                        _f.write(f"[{datetime.now()}] MongoDB save SUCCESS. Album: {album_title} by {artist_name}\n")
                     yield f"data: {json.dumps({'type': 'saved', 'message': 'Saved to library'})}\n\n"
                 except Exception as e:
                     logger.error(f"MongoDB save failed: {e}")
+                    with open(_dbg, 'a') as _f:
+                        _f.write(f"[{datetime.now()}] MongoDB save FAILED: {e}\n")
                     yield f"data: {json.dumps({'type': 'warning', 'message': f'Library save failed: {e}. Files were ripped successfully.'})}\n\n"
 
             # Final status
@@ -564,7 +579,7 @@ def mongo_delete_album(request, album_id):
     try:
         client = MongoClient(
             settings.MONGODB_URI,
-            serverSelectionTimeoutMS=5000,
+            serverSelectionTimeoutMS=20000,
             socketTimeoutMS=10000,
             connectTimeoutMS=5000,
         )
@@ -605,7 +620,7 @@ def mongo_import_local(request):
     try:
         client = MongoClient(
             settings.MONGODB_URI,
-            serverSelectionTimeoutMS=5000,
+            serverSelectionTimeoutMS=20000,
             socketTimeoutMS=10000,
             connectTimeoutMS=5000,
         )
@@ -647,7 +662,7 @@ def mongo_library(request):
     try:
         client = MongoClient(
             settings.MONGODB_URI,
-            serverSelectionTimeoutMS=5000,
+            serverSelectionTimeoutMS=20000,
             socketTimeoutMS=10000,
             connectTimeoutMS=5000,
         )
@@ -682,7 +697,7 @@ def mongo_stats(request):
         return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})
 
     try:
-        client = MongoClient(settings.MONGODB_URI, serverSelectionTimeoutMS=3000)
+        client = MongoClient(settings.MONGODB_URI, serverSelectionTimeoutMS=20000)
         db = client.get_database()
         albums_collection = db['albums']
 
@@ -719,7 +734,7 @@ def mongo_stats(request):
 def _get_mongo_client():
     return MongoClient(
         settings.MONGODB_URI,
-        serverSelectionTimeoutMS=5000,
+        serverSelectionTimeoutMS=20000,
         socketTimeoutMS=10000,
         connectTimeoutMS=5000,
     )
