@@ -66,6 +66,7 @@ def _upload_to_r2(local_path: str, object_key: str) -> str:
 # --- MongoDB Auth Views ---
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_auth_register(request):
     username = request.data.get('username', '').strip()
@@ -91,6 +92,7 @@ def mongo_auth_register(request):
 
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_auth_login(request):
     username = request.data.get('username', '').strip()
@@ -109,18 +111,18 @@ def mongo_auth_login(request):
         return Response({'error': str(e)}, status=500)
 
 
-@csrf_exempt
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
 def mongo_auth_me(request):
-    if request.method != 'GET':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
-    auth = request.headers.get('Authorization', '')
+    auth = request.META.get('HTTP_AUTHORIZATION', '')
     if not auth.startswith('Bearer '):
-        return JsonResponse({'error': 'No token'}, status=401)
+        return Response({'error': 'No token'}, status=401)
     try:
         payload = pyjwt.decode(auth[7:], _JWT_SECRET, algorithms=['HS256'])
-        return JsonResponse({'id': payload['id'], 'username': payload['username']})
+        return Response({'id': payload['id'], 'username': payload['username']})
     except Exception:
-        return JsonResponse({'error': 'Invalid token'}, status=401)
+        return Response({'error': 'Invalid token'}, status=401)
 
 
 @api_view(['POST'])
