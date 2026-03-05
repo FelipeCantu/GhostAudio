@@ -168,7 +168,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
             audioRef.current.volume = volume;
             audioRef.current.src = src;
-            audioRef.current.play().catch(e => console.error("[Player] Playback failed:", e));
+            audioRef.current.play().catch(e => {
+                if (e.name !== 'AbortError') console.error("[Player] Playback failed:", e);
+            });
         }
     };
 
