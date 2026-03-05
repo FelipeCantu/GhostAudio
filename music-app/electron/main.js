@@ -20,7 +20,7 @@ const isDev = !app.isPackaged;
 // Custom Protocol Handler for Production
 if (!isDev) {
   protocol.registerSchemesAsPrivileged([
-    { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true } }
+    { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true } }
   ]);
 }
 
@@ -299,7 +299,7 @@ ipcMain.handle('auth-login', async (event, { username, password }) => {
 
     return {
       access: token,
-      user: { username: user.username, email: user.email, id: user._id }
+      user: { username: user.username, email: user.email, id: user._id.toString() }
     };
   } catch (err) {
     console.error("Login IPC error:", err);

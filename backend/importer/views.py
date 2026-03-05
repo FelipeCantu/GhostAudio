@@ -60,6 +60,10 @@ def _upload_to_r2(local_path: str, object_key: str) -> str:
         return f"{settings.R2_PUBLIC_URL}/{object_key}"
     except Exception as e:
         logger.warning(f"R2 upload failed for {local_path}: {e}")
+        from pathlib import Path as _P
+        _dbg = _P(os.path.expanduser('~')) / 'ghost_app_debug.log'
+        with open(_dbg, 'a') as _f:
+            _f.write(f"[R2 ERROR] {type(e).__name__}: {e} | key={os.path.basename(local_path)} | bucket={settings.R2_BUCKET_NAME} | account_id_len={len(settings.R2_ACCOUNT_ID)}\n")
         return local_path  # graceful fallback
 
 

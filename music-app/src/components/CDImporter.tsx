@@ -115,6 +115,10 @@ export default function CDImporter() {
             try {
                 const sys = await api.system.getSystemStatus();
                 if (cancelled) return;
+                // getSystemStatus never throws — returns { error } on connection failure.
+                if (sys.error && (sys.error.includes('Connection') || sys.error.includes('fetch'))) {
+                    throw new Error(sys.error);
+                }
                 setIsConnecting(false);
                 setFfmpegMissing(!sys.ffmpeg_found);
                 scanDrives();
@@ -214,6 +218,10 @@ const fetchMetadata = async (drive: string) => {
             try {
                 const sys = await api.system.getSystemStatus();
                 if (cancelled) return;
+                // getSystemStatus never throws — returns { error } on connection failure.
+                if (sys.error && (sys.error.includes('Connection') || sys.error.includes('fetch'))) {
+                    throw new Error(sys.error);
+                }
                 setIsConnecting(false);
                 setFfmpegMissing(!sys.ffmpeg_found);
                 scanDrives();

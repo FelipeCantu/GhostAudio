@@ -152,7 +152,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             // In Electron, use custom 'localfile' protocol for local audio files
             let src = audioFile;
             console.log("[Player] Original audio file:", src);
-            if (src && !src.startsWith('http') && !src.startsWith('localfile://') && !src.startsWith('file://')) {
+            const isLocalPath = src && !src.startsWith('http') && !src.startsWith('localfile://') && !src.startsWith('file://');
+            const isElectron = typeof window !== 'undefined' && (window as any).electronAPI !== undefined;
+            if (isLocalPath) {
+                if (!isElectron) {
+                    setError("This track is stored locally and can only be played in the Desktop App.");
+                    setIsPlaying(false);
+                    setIsLoading(false);
+                    return;
+                }
                 // Use localfile:// protocol which is handled by Electron main process
                 src = `localfile://${src.replace(/\\/g, '/')}`;
             }
