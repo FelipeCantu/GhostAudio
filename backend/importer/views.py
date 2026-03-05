@@ -32,6 +32,11 @@ _JWT_SECRET = os.environ.get('JWT_SECRET', 'fallback_secret')
 # --- R2 Helpers ---
 
 def _get_r2_client():
+    import sys
+    # PyInstaller frozen binaries have TLS handshake failures with Cloudflare due to
+    # Python 3.14 / OpenSSL cipher incompatibilities. verify=False keeps HTTPS
+    # encryption active but skips cert validation — acceptable for a desktop app.
+    verify = not getattr(sys, 'frozen', False)
     return boto3.client(
         's3',
         endpoint_url=f'https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com',
@@ -44,6 +49,7 @@ def _get_r2_client():
             retries={'max_attempts': 2},
         ),
         region_name='auto',
+        verify=verify,
     )
 
 
