@@ -515,10 +515,10 @@ def rip_cd_stream(request):
                         'createdAt': datetime.now()
                     }
 
-                    albums_collection.insert_one(new_album)
+                    result = albums_collection.insert_one(new_album)
                     with open(_dbg, 'a') as _f:
                         _f.write(f"[{datetime.now()}] MongoDB save SUCCESS. Album: {album_title} by {artist_name}\n")
-                    yield f"data: {json.dumps({'type': 'saved', 'message': 'Saved to library'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'saved', 'message': 'Saved to library', 'album_id': str(result.inserted_id)})}\n\n"
                 except Exception as e:
                     logger.error(f"MongoDB save failed: {e}")
                     with open(_dbg, 'a') as _f:
@@ -1036,4 +1036,32 @@ def mongo_playlist_refresh(request, playlist_id):
         return Response(_serialize_playlist(updated, full=True))
     except Exception as e:
         logger.error(f"mongo_playlist_refresh error: {e}")
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
+def mongo_update_track_urls(request):
+    """Update track audioFile URLs in a saved album (called by Electron after R2 upload)."""
+    album_id = request.data.get('album_id')
+    tracks = request.data.get('tracks', [])  # [{track_number, audio_file}, ...]
+    if not album_id or not tracks:
+        return Response({'error': 'album_id and tracks required'}, status=400)
+    try:
+        client = _get_mongo_client()
+        db = client.get_database()
+        albums_col = db['albums']
+        album = albums_col.find_one({'_id': ObjectId(album_id)})
+        if not album:
+            return Response({'error': 'Album not found'}, status=404)
+        track_map = {int(t['track_number']): t['audio_file'] for t in tracks}
+        updated_tracks = []
+        for t in album.get('tracks', []):
+            num = t.get('trackNumber', 0)
+            updated_tracks.append({**t, 'audioFile': track_map.get(num, t.get('audioFile', ''))})
+        albums_col.update_one({'_id': ObjectId(album_id)}, {'$set': {'tracks': updated_tracks}})
+        return Response({'ok': True})
+    except Exception as e:
+        logger.error(f"mongo_update_track_urls error: {e}")
         return Response({'error': str(e)}, status=500)

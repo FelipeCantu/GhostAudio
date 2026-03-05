@@ -8,6 +8,32 @@ require('dotenv').config({ path: envPath });
 const { spawn } = require('child_process');
 // const serve = require('electron-serve'); // Removed
 const services = require('./services');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+
+function _getR2Client() {
+  return new S3Client({
+    region: 'auto',
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+  });
+}
+
+async function _uploadTrackToR2(localPath, objectKey) {
+  if (!process.env.R2_ACCOUNT_ID) return null;
+  const fileStream = fs.createReadStream(localPath);
+  const ext = path.extname(localPath).toLowerCase().slice(1);
+  const mime = { mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg' }[ext] || 'application/octet-stream';
+  await _getR2Client().send(new PutObjectCommand({
+    Bucket: process.env.R2_BUCKET_NAME,
+    Key: objectKey,
+    Body: fileStream,
+    ContentType: mime,
+  }));
+  return `${process.env.R2_PUBLIC_URL}/${objectKey}`;
+}
 
 let mainWindow;
 let backendProcess = null;
@@ -250,8 +276,48 @@ ipcMain.handle('rip-cd', async (event, args) => {
     if (!drive) throw new Error('No drive path provided');
     console.log('[IPC rip-cd] Starting rip for:', drive);
     const result = await services.ripCD(args, event.sender);
-    console.log('[IPC rip-cd] Result:', result);
-    // Return the backend response directly (it has status: 'completed')
+    console.log('[IPC rip-cd] Rip done, albumId:', result.albumId, 'tracks:', result.tracks?.length);
+
+    // Upload tracks to R2 from Electron (Node.js TLS works; frozen Python TLS does not)
+    if (result.albumId && result.tracks?.length && process.env.R2_ACCOUNT_ID) {
+      const metadata = args.metadata || {};
+      const artist = metadata.artist || 'Unknown Artist';
+      const album = metadata.album || 'Unknown Album';
+      const mongoUserId = args.mongo_user_id;
+
+      if (event.sender && !event.sender.isDestroyed()) {
+        event.sender.send('rip-progress', { type: 'progress', message: 'Uploading to cloud...' });
+      }
+
+      const updatedTracks = [];
+      for (const localPath of result.tracks) {
+        const filename = path.basename(localPath);
+        const objectKey = `audio/${mongoUserId}/${artist}/${album}/${filename}`;
+        try {
+          const r2Url = await _uploadTrackToR2(localPath, objectKey);
+          const trackNumMatch = filename.match(/^(\d+)/);
+          const trackNumber = trackNumMatch ? parseInt(trackNumMatch[1]) : 0;
+          if (r2Url) updatedTracks.push({ track_number: trackNumber, audio_file: r2Url });
+          console.log('[IPC rip-cd] Uploaded:', filename, '->', r2Url);
+        } catch (uploadErr) {
+          console.error('[IPC rip-cd] R2 upload failed for', filename, uploadErr.message);
+        }
+      }
+
+      if (updatedTracks.length > 0) {
+        try {
+          await fetch('http://127.0.0.1:8000/api/mongo/update-track-urls/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ album_id: result.albumId, tracks: updatedTracks }),
+          });
+          console.log('[IPC rip-cd] MongoDB track URLs updated with R2 paths');
+        } catch (patchErr) {
+          console.error('[IPC rip-cd] Failed to update track URLs in MongoDB:', patchErr.message);
+        }
+      }
+    }
+
     return result;
   } catch (err) {
     console.error("[IPC rip-cd] Error:", err);

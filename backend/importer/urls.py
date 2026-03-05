@@ -20,6 +20,7 @@ urlpatterns = [
     path('mongo/upload-audio/', views.mongo_upload_audio, name='mongo_upload_audio'),
 
     # MongoDB Direct (Desktop App)
+    path('mongo/update-track-urls/', views.mongo_update_track_urls, name='mongo_update_track_urls'),
     path('mongo/import-local/', views.mongo_import_local, name='mongo_import_local'),
     path('mongo/library/', views.mongo_library, name='mongo_library'),
     path('mongo/library/<str:album_id>/', views.mongo_delete_album, name='mongo_delete_album'),

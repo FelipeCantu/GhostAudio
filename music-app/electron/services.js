@@ -241,6 +241,7 @@ const Services = {
             let lastProgress = null;
             let settled = false;  // Track whether promise has been resolved/rejected
             let sseBuffer = '';   // Buffer for partial SSE lines across chunks
+            let savedAlbumId = null;
 
             request.on('response', (response) => {
                 console.log(`[Electron ripCD] Response status: ${response.statusCode}`);
@@ -277,9 +278,11 @@ const Services = {
 
                                 lastProgress = data;
 
-                                if (data.type === 'complete' && !settled) {
+                                if (data.type === 'saved' && data.album_id) {
+                                    savedAlbumId = data.album_id;
+                                } else if (data.type === 'complete' && !settled) {
                                     settled = true;
-                                    resolve({ status: 'completed', tracks: data.tracks });
+                                    resolve({ status: 'completed', tracks: data.tracks, albumId: savedAlbumId });
                                 } else if (data.type === 'error' && !settled) {
                                     settled = true;
                                     reject(new Error(data.message));
