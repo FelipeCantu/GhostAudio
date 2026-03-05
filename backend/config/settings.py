@@ -63,7 +63,6 @@ INSTALLED_APPS = [
     'corsheaders',
     'importer',
     'rest_framework',
-    'rest_framework_simplejwt',
 ]
 
 MIDDLEWARE = [
@@ -151,8 +150,3 @@ REST_FRAMEWORK = {
     'UNAUTHENTICATED_USER': None,
 }
 
-from datetime import timedelta
-SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
-}
