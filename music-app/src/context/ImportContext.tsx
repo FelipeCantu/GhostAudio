@@ -69,29 +69,22 @@ function clearPersistedState() {
 const ImportContext = createContext<ImportContextType | undefined>(undefined);
 
 export function ImportProvider({ children }: { children: React.ReactNode }) {
-    // Lazy initializer: restore in-progress state immediately on first render so
-    // the indicator appears without a flash when the page is reloaded in packaged mode.
-    const [state, setState] = useState<ImportState>(() => {
-        if (typeof window !== 'undefined') {
-            const persisted = loadPersistedState();
-            if (persisted) return persisted;
-        }
-        return initialState;
-    });
-    const sessionIdRef = useRef<string | null>(
-        typeof window !== 'undefined' ? (() => {
-            try {
-                const saved = localStorage.getItem(STORAGE_KEY);
-                if (saved) return (JSON.parse(saved) as ImportState).ripSessionId ?? null;
-            } catch {}
-            return null;
-        })() : null
-    );
+    const [state, setState] = useState<ImportState>(initialState);
+    const sessionIdRef = useRef<string | null>(null);
     const cancelledRef = useRef<boolean>(false);
     // Tracks whether startImport() is currently awaiting an IPC response.
     // Used to avoid double-completion when the user navigated away and handleProgress
     // handles type:'complete' instead of startImport.
     const startImportActiveRef = useRef<boolean>(false);
+
+    // Restore persisted import state after hydration (avoids SSR/client mismatch).
+    useEffect(() => {
+        const persisted = loadPersistedState();
+        if (persisted) {
+            setState(persisted);
+            sessionIdRef.current = persisted.ripSessionId ?? null;
+        }
+    }, []);
 
     // Register the rip-progress listener once. Also restores in-progress import state
     // from localStorage so the indicator survives page navigation in the packaged app

@@ -276,21 +276,40 @@ ipcMain.handle('rip-cd', async (event, args) => {
     if (!drive) throw new Error('No drive path provided');
     console.log('[IPC rip-cd] Starting rip for:', drive);
     const result = await services.ripCD(args, event.sender);
-    console.log('[IPC rip-cd] Rip done, albumId:', result.albumId, 'tracks:', result.tracks?.length);
+    const metadata = args.metadata || {};
+    const artist = metadata.artist || 'Unknown Artist';
+    const album = metadata.album || 'Unknown Album';
+    const mongoUserId = args.mongo_user_id;
+
+    // Normalize: old backend sends tracks as a count (number), new sends the array of paths.
+    let trackPaths = Array.isArray(result.tracks) ? result.tracks : [];
+
+    // Fallback: if backend didn't send file paths, scan the ripped album folder directly.
+    if (trackPaths.length === 0 && result.albumId) {
+      const os = require('os');
+      const sanitize = (s) => `${s}`.split('').filter(c => /[a-zA-Z0-9 ._-]/.test(c)).join('').trim();
+      const libraryBase = path.join(os.homedir(), 'Music', 'GhostAudio Library');
+      const albumFolder = path.join(libraryBase, sanitize(artist), sanitize(album));
+      if (fs.existsSync(albumFolder)) {
+        const audioExts = new Set(['.wav', '.flac', '.mp3', '.m4a', '.aac', '.ogg']);
+        trackPaths = fs.readdirSync(albumFolder)
+          .filter(f => audioExts.has(path.extname(f).toLowerCase()))
+          .sort()
+          .map(f => path.join(albumFolder, f));
+        console.log('[IPC rip-cd] Fallback folder scan:', trackPaths.length, 'tracks in', albumFolder);
+      }
+    }
+
+    console.log('[IPC rip-cd] Rip done, albumId:', result.albumId, 'trackPaths:', trackPaths.length);
 
     // Upload tracks to R2 from Electron (Node.js TLS works; frozen Python TLS does not)
-    if (result.albumId && result.tracks?.length && process.env.R2_ACCOUNT_ID) {
-      const metadata = args.metadata || {};
-      const artist = metadata.artist || 'Unknown Artist';
-      const album = metadata.album || 'Unknown Album';
-      const mongoUserId = args.mongo_user_id;
-
+    if (result.albumId && trackPaths.length > 0 && process.env.R2_ACCOUNT_ID) {
       if (event.sender && !event.sender.isDestroyed()) {
         event.sender.send('rip-progress', { type: 'progress', message: 'Uploading to cloud...' });
       }
 
       const updatedTracks = [];
-      for (const localPath of result.tracks) {
+      for (const localPath of trackPaths) {
         const filename = path.basename(localPath);
         const objectKey = `audio/${mongoUserId}/${artist}/${album}/${filename}`;
         try {

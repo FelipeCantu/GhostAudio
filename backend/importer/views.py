@@ -529,7 +529,7 @@ def rip_cd_stream(request):
             if result_holder['error']:
                 yield f"data: {json.dumps({'type': 'error', 'message': result_holder['error']})}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'complete', 'tracks': len(result_holder['tracks'] or [])})}\n\n"
+                yield f"data: {json.dumps({'type': 'complete', 'tracks': result_holder['tracks'] or []})}\n\n"
         finally:
             # Clean up session registry
             with _rips_lock:

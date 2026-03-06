@@ -111,6 +111,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
                                     <Link
                                         key={pl.id}
                                         href={`/playlists/${pl.id}`}
+                                        prefetch={false}
                                         className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all group ${active ? 'bg-[#f4d35e]/10 text-[#f4d35e]' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
                                     >
                                         <PlaylistCoverArt coverArts={pl.cover_arts || []} size={32} />

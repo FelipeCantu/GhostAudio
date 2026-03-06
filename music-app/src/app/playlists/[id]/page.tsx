@@ -3,7 +3,9 @@
 import PlaylistDetailClient from "./PlaylistDetailClient";
 
 export function generateStaticParams() {
-    return [{ id: '_' }];
+    // Only pre-render the placeholder path for Electron static export.
+    // For Vercel SSR, return empty so all paths render dynamically.
+    return process.env.ELECTRON_BUILD === 'true' ? [{ id: '_' }] : [];
 }
 
 export default function PlaylistDetailPage() {
