@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { ArrowLeft, Disc, Play, Pause, Clock, ListPlus, Check } from "lucide-react";
+import { ArrowLeft, Disc, Play, Pause, Clock, ListPlus, Check, Shuffle, Heart, MoreHorizontal } from "lucide-react";
 import { usePlayer } from "@/context/PlayerContext";
 import { usePlaylist } from "@/context/PlaylistContext";
 import { Album, Track, PlaylistItem } from "@/services/api";
@@ -95,7 +95,7 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
         <div className="relative flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Background Blur Effect */}
             {coverArt && (
-                <div className="absolute top-0 left-0 w-full h-[500px] overflow-hidden -z-10 opacity-20 mask-image-gradient">
+                <div className="fixed inset-x-0 top-0 h-[500px] overflow-hidden z-[1] opacity-25 pointer-events-none">
                     <Image
                         src={coverArt}
                         alt=""
@@ -149,27 +149,35 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                         <span className="text-zinc-400">{tracks.length} tracks</span>
                     </div>
 
-                    <div className="flex items-center gap-4 justify-center md:justify-start flex-wrap">
+                    <div className="flex items-center gap-3 justify-center md:justify-start flex-wrap">
+                        {/* Play Album - Primary CTA */}
                         <button
                             onClick={handlePlayAll}
-                            className="flex items-center gap-3 px-8 py-4 bg-primary text-primary-foreground font-bold rounded-full hover:bg-primary/90 hover:scale-105 transition-all shadow-lg shadow-primary/25"
+                            className="flex items-center gap-2.5 px-7 py-3.5 bg-[#f4d35e] text-[#0d1b2a] font-bold rounded-full hover:bg-[#f4d35e]/90 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-[#f4d35e]/20 text-sm tracking-wide"
                         >
-                            <Play size={24} fill="currentColor" />
+                            <Play size={18} fill="currentColor" />
                             Play Album
+                        </button>
+
+                        {/* Shuffle */}
+                        <button className="flex items-center gap-2 px-5 py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium">
+                            <Shuffle size={16} />
+                            Shuffle
                         </button>
 
                         {/* Add to Playlist */}
                         <div className="relative" ref={menuRef}>
                             <button
                                 onClick={() => setShowPlaylistMenu(v => !v)}
-                                className="p-4 rounded-full bg-white/5 text-white hover:bg-white/10 transition-colors border border-white/5"
+                                className="flex items-center gap-2 px-5 py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium"
                                 title="Add album to playlist"
                             >
-                                <ListPlus size={24} />
+                                <ListPlus size={16} />
+                                Add to Playlist
                             </button>
                             {showPlaylistMenu && (
-                                <div className="absolute top-full left-0 mt-2 w-56 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden">
-                                    <div className="px-3 py-2 text-xs font-bold uppercase tracking-wider text-zinc-500 border-b border-white/5">Add to playlist</div>
+                                <div className="absolute top-full left-0 mt-2 w-56 bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                                    <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-zinc-500 border-b border-white/5">Add to playlist</div>
                                     {playlists.filter(p => !p.is_smart).length === 0 ? (
                                         <p className="px-4 py-3 text-sm text-zinc-500">No manual playlists.</p>
                                     ) : (
@@ -177,7 +185,7 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                                             <button
                                                 key={pl.id}
                                                 onClick={() => handleAddToPlaylist(pl.id, pl.name)}
-                                                className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
+                                                className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2.5"
                                             >
                                                 <ListPlus size={14} className="text-zinc-500" />
                                                 {pl.name}
@@ -188,11 +196,14 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                             )}
                         </div>
 
-                        <button className="p-4 rounded-full bg-white/5 text-white hover:bg-white/10 transition-colors border border-white/5">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" /></svg>
+                        {/* Like */}
+                        <button className="p-3.5 rounded-full bg-white/5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 border border-white/10 hover:border-red-500/20 transition-all" title="Like">
+                            <Heart size={18} />
                         </button>
-                        <button className="p-4 rounded-full bg-white/5 text-white hover:bg-white/10 transition-colors border border-white/5">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></svg>
+
+                        {/* More */}
+                        <button className="p-3.5 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white border border-white/10 hover:border-white/20 transition-all" title="More options">
+                            <MoreHorizontal size={18} />
                         </button>
                     </div>
 
@@ -226,11 +237,12 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                             <div
                                 key={track.id}
                                 onClick={() => handlePlayTrack(track)}
-                                className={`group grid grid-cols-[auto_1fr_auto] gap-4 items-center px-4 py-3 rounded-lg cursor-pointer transition-all border border-transparent ${isCurrent
-                                    ? 'bg-primary/10 border-primary/20'
-                                    : 'hover:bg-white/5 hover:border-white/5'
+                                className={`group grid grid-cols-[auto_1fr_auto] gap-4 items-center px-4 py-3.5 rounded-xl cursor-pointer transition-all border relative overflow-hidden ${isCurrent
+                                    ? 'bg-[#f4d35e]/[0.08] border-[#f4d35e]/15 shadow-sm'
+                                    : 'border-transparent hover:bg-white/5 hover:border-white/8'
                                     }`}
                             >
+                                {isCurrent && <div className="absolute left-0 top-1/4 bottom-1/4 w-0.5 bg-[#f4d35e] rounded-full" />}
                                 {/* Track Number / Play Icon */}
                                 <div className="w-8 flex items-center justify-center text-sm font-medium">
                                     {isPlayingCurrent ? (

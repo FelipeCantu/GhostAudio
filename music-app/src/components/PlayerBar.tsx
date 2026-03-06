@@ -44,11 +44,11 @@ export default function PlayerBar() {
                 initial={{ y: 100 }}
                 animate={{ y: 0 }}
                 exit={{ y: 100 }}
-                className="fixed bottom-0 left-0 right-0 z-50 bg-[#0d1b2a]/95 backdrop-blur-xl border-t border-white/10 h-24 px-6 flex items-center justify-between"
+                className="fixed bottom-0 left-0 right-0 z-50 bg-[#0d1b2a]/95 backdrop-blur-xl border-t border-white/10 h-20 md:h-24 px-4 md:px-6 flex items-center justify-between gap-2"
             >
                 {/* Track Info */}
-                <div className="flex items-center gap-4 w-1/4">
-                    <div className="relative w-14 h-14 rounded-lg overflow-hidden bg-black/50 border border-white/5 flex-shrink-0">
+                <div className="flex items-center gap-2 md:gap-4 flex-1 md:w-1/4 md:flex-none min-w-0">
+                    <div className="relative w-10 h-10 md:w-14 md:h-14 rounded-lg overflow-hidden bg-black/50 border border-white/5 flex-shrink-0">
                         {currentAlbum?.coverArt ? (
                             <img
                                 src={currentAlbum.coverArt}
@@ -62,7 +62,7 @@ export default function PlayerBar() {
                         )}
                     </div>
                     <div className="min-w-0">
-                        <h4 className="font-bold text-white truncate">{currentTrack.title}</h4>
+                        <h4 className="font-bold text-white truncate text-sm md:text-base">{currentTrack.title}</h4>
                         <p className="text-xs text-zinc-400 truncate">
                             {currentAlbum?.artist || `Track ${currentTrack.track_number}`}
                         </p>
@@ -73,9 +73,9 @@ export default function PlayerBar() {
                 </div>
 
                 {/* Controls */}
-                <div className="flex flex-col items-center flex-1 max-w-xl gap-2">
-                    <div className="flex items-center gap-6">
-                        <button onClick={prevTrack} className="text-zinc-400 hover:text-white transition-colors">
+                <div className="flex flex-col items-center flex-shrink-0 md:flex-1 md:max-w-xl gap-2">
+                    <div className="flex items-center gap-4 md:gap-6">
+                        <button onClick={prevTrack} className="hidden md:block text-zinc-400 hover:text-white transition-colors">
                             <SkipBack size={20} />
                         </button>
                         <button
@@ -96,7 +96,7 @@ export default function PlayerBar() {
                     </div>
 
                     {/* Progress Bar */}
-                    <div className="w-full flex items-center gap-3 text-xs font-mono">
+                    <div className="hidden md:flex w-full items-center gap-3 text-xs font-mono">
                         <span className="text-zinc-400 min-w-[40px] text-right">{formatTime(progress)}</span>
                         <div className="flex-1 h-1.5 bg-white/10 rounded-full cursor-pointer relative group hover:h-2 transition-all"
                             onClick={(e) => {
@@ -129,7 +129,7 @@ export default function PlayerBar() {
                 </div>
 
                 {/* Volume Controls */}
-                <div className="w-1/4 flex justify-end items-center gap-2">
+                <div className="hidden md:flex w-1/4 justify-end items-center gap-2">
                     <button onClick={toggleMute} className="text-zinc-400 hover:text-white transition-colors">
                         {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
                     </button>

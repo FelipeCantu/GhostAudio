@@ -32,7 +32,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
 
     return (
-        <div className="flex min-h-screen bg-background text-foreground">
+        <div className="flex h-screen overflow-hidden bg-background text-foreground">
             {/* Background elements */}
             <div className="fixed inset-0 pointer-events-none z-0">
                 <div className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-primary/5 blur-[120px] animate-pulse" />

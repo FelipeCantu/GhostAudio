@@ -44,7 +44,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             </AnimatePresence>
 
             <motion.div
-                className={`h-screen w-64 bg-black/95 lg:bg-black/60 backdrop-blur-xl border-r border-white/10 flex flex-col fixed left-0 top-0 z-50 shadow-2xl transition-transform duration-300 lg:translate-x-0 ${isOpen ? "translate-x-0" : "-translate-x-full"
+                className={`h-screen w-64 bg-black/95 lg:bg-black/60 backdrop-blur-xl border-r border-white/10 flex flex-col fixed left-0 top-0 z-50 shadow-2xl transition-transform duration-300 lg:translate-x-0 pb-20 md:pb-24 ${isOpen ? "translate-x-0" : "-translate-x-full"
                     }`}
             >
                 {/* Mobile Close Button */}

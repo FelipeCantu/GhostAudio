@@ -583,65 +583,68 @@ ipcMain.handle('import-local-files', async (event, args) => {
   const os = require('os');
   const libraryPath = path.join(os.homedir(), 'Music', 'GhostAudio Library');
 
-  // Prompt for album info
-  // For simplicity, derive album name from folder or use "Imported Album"
+  // Derive album name from the shared parent folder, fall back to 'Imported Album'
   const firstFile = files[0];
   const folderName = path.basename(path.dirname(firstFile));
   const albumName = folderName !== 'Music' && folderName !== os.homedir() ? folderName : 'Imported Album';
   const artistName = 'Unknown Artist';
 
-  // Create album folder
+  // Create album folder in the local library
   const albumFolder = path.join(libraryPath, artistName, albumName);
   if (!fs.existsSync(albumFolder)) {
     fs.mkdirSync(albumFolder, { recursive: true });
   }
 
-  // Copy files and build track list
+  // Copy files, upload each to R2 directly from Node.js, build track list
   const tracks = [];
   for (let i = 0; i < files.length; i++) {
     const srcFile = files[i];
     const fileName = path.basename(srcFile);
     const destFile = path.join(albumFolder, fileName);
 
-    // Copy file if not already in library
+    // Copy into library folder if the source is not already there
     if (srcFile !== destFile) {
       fs.copyFileSync(srcFile, destFile);
     }
 
-    // Extract track name from filename (remove extension and leading numbers)
+    // Extract track title: strip leading track numbers (e.g. "01 - ", "02. ")
     let trackTitle = path.basename(fileName, path.extname(fileName));
-    trackTitle = trackTitle.replace(/^\d+[\s\-_.]*/, ''); // Remove leading track numbers
+    trackTitle = trackTitle.replace(/^\d+[\s\-_.]*/, '').trim() || `Track ${i + 1}`;
 
-    // Upload to R2 if backend supports it; fall back to local path
-    let audioUrl = destFile;
-    try {
-      const fileBuffer = fs.readFileSync(destFile);
-      const formData = new FormData();
-      formData.append('user_id', mongo_user_id);
-      formData.append('album_title', albumName);
-      formData.append('artist', artistName);
-      formData.append('file', new Blob([fileBuffer]), path.basename(destFile));
-      const uploadRes = await fetch('http://127.0.0.1:8000/api/mongo/upload-audio/', {
-        method: 'POST',
-        body: formData
-      });
-      if (uploadRes.ok) {
-        const { url } = await uploadRes.json();
-        if (url) audioUrl = url;
+    // --- R2 upload directly from Node.js (bypasses frozen Python backend TLS issues) ---
+    // Progress event mirrors the rip-cd handler so the UI can show upload status.
+    let audioUrl = destFile; // graceful fallback: local path if R2 is not configured or fails
+    if (process.env.R2_ACCOUNT_ID) {
+      if (event.sender && !event.sender.isDestroyed()) {
+        event.sender.send('rip-progress', {
+          type: 'progress',
+          message: `Uploading to cloud: ${i + 1} / ${files.length}`
+        });
       }
-    } catch (uploadErr) {
-      console.warn('[Import Local] R2 upload failed, using local path:', uploadErr.message);
+      const objectKey = `audio/${mongo_user_id}/${artistName}/${albumName}/${fileName}`;
+      try {
+        const r2Url = await _uploadTrackToR2(destFile, objectKey);
+        if (r2Url) {
+          audioUrl = r2Url;
+          console.log('[Import Local] Uploaded to R2:', fileName, '->', r2Url);
+        }
+      } catch (uploadErr) {
+        // Non-fatal: fall back to the local file path so the import always succeeds
+        console.warn('[Import Local] R2 upload failed, using local path:', uploadErr.message);
+      }
     }
 
     tracks.push({
-      title: trackTitle || `Track ${i + 1}`,
+      title: trackTitle,
       trackNumber: i + 1,
       audioFile: audioUrl,
       duration: '00:00'
     });
   }
 
-  // Save to MongoDB via backend
+  // Persist the album to MongoDB via the backend import-local endpoint.
+  // This endpoint only writes to MongoDB — it does not touch R2 — so it is
+  // safe to call from both dev and frozen builds.
   try {
     const response = await fetch('http://127.0.0.1:8000/api/mongo/import-local/', {
       method: 'POST',
@@ -655,14 +658,14 @@ ipcMain.handle('import-local-files', async (event, args) => {
     });
 
     if (!response.ok) {
-      throw new Error('Failed to save album');
+      throw new Error(`Backend returned ${response.status}`);
     }
 
     const data = await response.json();
-    console.log('[Import Local] Album saved:', data);
+    console.log('[Import Local] Album saved to MongoDB:', data);
     return { success: true, album: data };
   } catch (err) {
-    console.error('[Import Local] Error saving album:', err);
+    console.error('[Import Local] Error saving album to MongoDB:', err);
     return { success: false, error: err.message };
   }
 });
