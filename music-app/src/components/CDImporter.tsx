@@ -108,7 +108,7 @@ export default function CDImporter() {
         setConnectFailed(false);
         let cancelled = false;
         let attempts = 0;
-        const MAX_ATTEMPTS = 20; // ~30 s at 1.5 s intervals
+        const MAX_ATTEMPTS = 40; // ~60 s at 1.5 s intervals (first-run PyInstaller extraction can take 30-60 s)
 
         const tryConnect = async () => {
             if (cancelled) return;

@@ -2,11 +2,33 @@
 
 import DashboardLayout from "@/components/DashboardLayout";
 import { useAuth } from "@/context/AuthContext";
+import { api } from "@/services/api";
 import { motion } from "framer-motion";
-import { User, Shield, HardDrive, LogOut } from "lucide-react";
+import { useState } from "react";
+import { User, Shield, HardDrive, LogOut, CloudUpload } from "lucide-react";
 
 export default function SettingsPage() {
     const { user, logout } = useAuth();
+    const [migrateStatus, setMigrateStatus] = useState<string | null>(null);
+    const [migrating, setMigrating] = useState(false);
+
+    const handleMigrateToR2 = async () => {
+        if (!api.isElectron()) return;
+        setMigrating(true);
+        setMigrateStatus('Uploading local tracks to cloud...');
+        try {
+            const result = await (window as any).electronAPI.invoke('migrate-local-to-r2', { mongoUserId: user?.id });
+            if (result.error) {
+                setMigrateStatus(`Error: ${result.error}`);
+            } else {
+                setMigrateStatus(`Done! ${result.patched} track(s) uploaded to cloud.`);
+            }
+        } catch (e: any) {
+            setMigrateStatus(`Failed: ${e.message}`);
+        } finally {
+            setMigrating(false);
+        }
+    };
 
     return (
         <DashboardLayout>
@@ -68,6 +90,33 @@ export default function SettingsPage() {
                         </div>
                     </div>
                 </div>
+
+                {/* Cloud Sync - Desktop only */}
+                {api.isElectron() && (
+                    <div className="bg-white/5 border border-white/10 rounded-3xl p-4 md:p-8 backdrop-blur-sm">
+                        <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                            <CloudUpload className="text-[#f4d35e]" />
+                            Cloud Sync
+                        </h2>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-zinc-300 font-medium">Upload Local Tracks to Cloud</p>
+                                <p className="text-xs text-zinc-500">Fix tracks imported before cloud upload was available so they play on web</p>
+                                {migrateStatus && (
+                                    <p className="text-xs mt-2 text-[#f4d35e]">{migrateStatus}</p>
+                                )}
+                            </div>
+                            <button
+                                onClick={handleMigrateToR2}
+                                disabled={migrating}
+                                className="px-4 py-2 bg-[#f4d35e]/10 hover:bg-[#f4d35e]/20 text-[#f4d35e] rounded-lg border border-[#f4d35e]/20 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <CloudUpload size={16} />
+                                {migrating ? 'Uploading...' : 'Sync Now'}
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* Danger Zone */}
                 <div className="bg-red-500/5 border border-red-500/10 rounded-3xl p-4 md:p-8 backdrop-blur-sm">

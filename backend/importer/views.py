@@ -1043,25 +1043,75 @@ def mongo_playlist_refresh(request, playlist_id):
 @authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_update_track_urls(request):
-    """Update track audioFile URLs in a saved album (called by Electron after R2 upload)."""
+    """
+    Patch audioFile URLs on a saved album's tracks (called by Electron after R2 upload).
+
+    Expects JSON body:
+      {
+        "album_id":     "<MongoDB ObjectId string>",
+        "mongo_user_id": "<MongoDB user ObjectId string>",
+        "tracks":       [{"track_number": 1, "audio_file": "https://..."}, ...]
+      }
+
+    Ownership is verified: the album's `user` field must match `mongo_user_id`.
+    Only tracks whose URLs start with 'http' are accepted to prevent re-introducing
+    local file paths.
+    """
+    from pathlib import Path as _Path
+    _log = _Path(os.path.expanduser('~')) / 'ghost_app_debug.log'
+
     album_id = request.data.get('album_id')
+    mongo_user_id = request.data.get('mongo_user_id')
     tracks = request.data.get('tracks', [])  # [{track_number, audio_file}, ...]
+
+    with open(_log, 'a') as _f:
+        _f.write(f"[{datetime.now()}] update-track-urls called: album_id={album_id}, user={mongo_user_id}, track_count={len(tracks)}\n")
+
     if not album_id or not tracks:
         return Response({'error': 'album_id and tracks required'}, status=400)
+    if not mongo_user_id:
+        return Response({'error': 'mongo_user_id required'}, status=400)
+
     try:
         client = _get_mongo_client()
         db = client.get_database()
         albums_col = db['albums']
         album = albums_col.find_one({'_id': ObjectId(album_id)})
         if not album:
+            with open(_log, 'a') as _f:
+                _f.write(f"[{datetime.now()}] update-track-urls: album {album_id} NOT FOUND\n")
             return Response({'error': 'Album not found'}, status=404)
-        track_map = {int(t['track_number']): t['audio_file'] for t in tracks}
+
+        # Verify that this album belongs to the requesting user.
+        if str(album.get('user', '')) != mongo_user_id:
+            with open(_log, 'a') as _f:
+                _f.write(f"[{datetime.now()}] update-track-urls: ownership mismatch for album {album_id}\n")
+            return Response({'error': 'Not authorized'}, status=403)
+
+        # Build a map of track_number -> R2 URL, ignoring any non-HTTP values
+        # to prevent accidentally overwriting good URLs with local paths.
+        track_map = {}
+        for t in tracks:
+            url = t.get('audio_file', '')
+            if url.startswith('http'):
+                track_map[int(t['track_number'])] = url
+
+        if not track_map:
+            with open(_log, 'a') as _f:
+                _f.write(f"[{datetime.now()}] update-track-urls: no valid HTTP URLs provided, skipping patch\n")
+            return Response({'ok': True, 'patched': 0})
+
         updated_tracks = []
         for t in album.get('tracks', []):
             num = t.get('trackNumber', 0)
             updated_tracks.append({**t, 'audioFile': track_map.get(num, t.get('audioFile', ''))})
+
         albums_col.update_one({'_id': ObjectId(album_id)}, {'$set': {'tracks': updated_tracks}})
-        return Response({'ok': True})
+        with open(_log, 'a') as _f:
+            _f.write(f"[{datetime.now()}] update-track-urls SUCCESS: {len(updated_tracks)} tracks patched for album {album_id}\n")
+        return Response({'ok': True, 'patched': len(track_map)})
     except Exception as e:
         logger.error(f"mongo_update_track_urls error: {e}")
+        with open(_log, 'a') as _f:
+            _f.write(f"[{datetime.now()}] update-track-urls ERROR: {e}\n")
         return Response({'error': str(e)}, status=500)

@@ -328,7 +328,8 @@ ipcMain.handle('rip-cd', async (event, args) => {
           await fetch('http://127.0.0.1:8000/api/mongo/update-track-urls/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ album_id: result.albumId, tracks: updatedTracks }),
+            // Include mongo_user_id so the backend can verify album ownership.
+            body: JSON.stringify({ album_id: result.albumId, tracks: updatedTracks, mongo_user_id: mongoUserId }),
           });
           console.log('[IPC rip-cd] MongoDB track URLs updated with R2 paths');
         } catch (patchErr) {
@@ -346,6 +347,57 @@ ipcMain.handle('rip-cd', async (event, args) => {
 
 ipcMain.handle('get-cd-metadata', async (event, args) => {
   return await services.getCdMetadata(args);
+});
+
+// Retroactively upload local-path tracks to R2 and patch MongoDB.
+// Called from Settings page so users can fix albums imported before R2 was working.
+ipcMain.handle('migrate-local-to-r2', async (event, { mongoUserId }) => {
+  if (!process.env.R2_ACCOUNT_ID) return { error: 'R2 not configured' };
+  try {
+    const libRes = await fetch(`http://127.0.0.1:8000/api/mongo/library/?user_id=${mongoUserId}`);
+    const libData = await libRes.json();
+    // The /api/mongo/library/ endpoint returns a plain array, not { albums: [] }.
+    const albums = Array.isArray(libData) ? libData : (libData.albums || []);
+    let totalPatched = 0;
+    for (const album of albums) {
+      const updatedTracks = [];
+      let needsPatch = false;
+      for (const track of album.tracks || []) {
+        const audioFile = track.audioFile || '';
+        if (audioFile && !audioFile.startsWith('http')) {
+          // Local path — upload to R2
+          if (fs.existsSync(audioFile)) {
+            const filename = path.basename(audioFile);
+            // MongoDB documents use album.title (not album.album) for the album name.
+            const objectKey = `audio/${mongoUserId}/${album.artist || 'Unknown'}/${album.title || 'Unknown'}/${filename}`;
+            try {
+              const r2Url = await _uploadTrackToR2(audioFile, objectKey);
+              if (r2Url) {
+                updatedTracks.push({ track_number: track.trackNumber || 0, audio_file: r2Url });
+                needsPatch = true;
+              }
+            } catch (e) {
+              console.error('[migrate-local-to-r2] Upload failed:', filename, e.message);
+            }
+          }
+        }
+      }
+      if (needsPatch && updatedTracks.length > 0) {
+        await fetch('http://127.0.0.1:8000/api/mongo/update-track-urls/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          // Include mongo_user_id so the backend can verify album ownership.
+          body: JSON.stringify({ album_id: album._id, tracks: updatedTracks, mongo_user_id: mongoUserId }),
+        });
+        totalPatched += updatedTracks.length;
+        console.log('[migrate-local-to-r2] Patched album:', album.album, updatedTracks.length, 'tracks');
+      }
+    }
+    return { ok: true, patched: totalPatched };
+  } catch (err) {
+    console.error('[migrate-local-to-r2] Error:', err);
+    return { error: err.message };
+  }
 });
 
 ipcMain.handle('cancel-rip', async (event, args) => {
