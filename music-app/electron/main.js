@@ -11,6 +11,10 @@ const services = require('./services');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
 function _getR2Client() {
+  // Electron uses BoringSSL which fails the TLS handshake with Cloudflare R2.
+  // Disable TLS cert validation for R2 uploads only (same workaround as Python's verify=False).
+  const https = require('https');
+  const { NodeHttpHandler } = require('@smithy/node-http-handler');
   return new S3Client({
     region: 'auto',
     endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -18,11 +22,15 @@ function _getR2Client() {
       accessKeyId: process.env.R2_ACCESS_KEY_ID,
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     },
+    requestHandler: new NodeHttpHandler({
+      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+    }),
   });
 }
 
 async function _uploadTrackToR2(localPath, objectKey) {
   if (!process.env.R2_ACCOUNT_ID) return null;
+  const fileSize = fs.statSync(localPath).size;
   const fileStream = fs.createReadStream(localPath);
   const ext = path.extname(localPath).toLowerCase().slice(1);
   const mime = { mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg' }[ext] || 'application/octet-stream';
@@ -31,6 +39,7 @@ async function _uploadTrackToR2(localPath, objectKey) {
     Key: objectKey,
     Body: fileStream,
     ContentType: mime,
+    ContentLength: fileSize,
   }));
   return `${process.env.R2_PUBLIC_URL}/${objectKey}`;
 }
@@ -304,14 +313,14 @@ ipcMain.handle('rip-cd', async (event, args) => {
 
     // Upload tracks to R2 from Electron (Node.js TLS works; frozen Python TLS does not)
     if (result.albumId && trackPaths.length > 0 && process.env.R2_ACCOUNT_ID) {
-      if (event.sender && !event.sender.isDestroyed()) {
-        event.sender.send('rip-progress', { type: 'progress', message: 'Uploading to cloud...' });
-      }
-
       const updatedTracks = [];
-      for (const localPath of trackPaths) {
+      for (let i = 0; i < trackPaths.length; i++) {
+        const localPath = trackPaths[i];
         const filename = path.basename(localPath);
         const objectKey = `audio/${mongoUserId}/${artist}/${album}/${filename}`;
+        if (event.sender && !event.sender.isDestroyed()) {
+          event.sender.send('rip-progress', { type: 'progress', message: `Uploading to cloud: ${i + 1} / ${trackPaths.length}` });
+        }
         try {
           const r2Url = await _uploadTrackToR2(localPath, objectKey);
           const trackNumMatch = filename.match(/^(\d+)/);
@@ -352,50 +361,102 @@ ipcMain.handle('get-cd-metadata', async (event, args) => {
 // Retroactively upload local-path tracks to R2 and patch MongoDB.
 // Called from Settings page so users can fix albums imported before R2 was working.
 ipcMain.handle('migrate-local-to-r2', async (event, { mongoUserId }) => {
-  if (!process.env.R2_ACCOUNT_ID) return { error: 'R2 not configured' };
+  const os = require('os');
+  const logPath = path.join(os.homedir(), 'ghost_app_debug.log');
+
+  /** Append a timestamped line to ghost_app_debug.log. */
+  function migLog(msg) {
+    const line = `[${new Date().toISOString()}] [migrate-local-to-r2] ${msg}\n`;
+    console.log(line.trimEnd());
+    try { fs.appendFileSync(logPath, line); } catch (_) {}
+  }
+
+  if (!process.env.R2_ACCOUNT_ID) {
+    migLog('R2 not configured — R2_ACCOUNT_ID is missing. Aborting.');
+    return { error: 'R2 not configured' };
+  }
+
+  migLog(`Starting migration for user: ${mongoUserId}`);
+  migLog(`R2 bucket: ${process.env.R2_BUCKET_NAME}  endpoint: ${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`);
+
   try {
     const libRes = await fetch(`http://127.0.0.1:8000/api/mongo/library/?user_id=${mongoUserId}`);
     const libData = await libRes.json();
     // The /api/mongo/library/ endpoint returns a plain array, not { albums: [] }.
     const albums = Array.isArray(libData) ? libData : (libData.albums || []);
+    migLog(`Library fetched — ${albums.length} album(s) found`);
+
     let totalPatched = 0;
     for (const album of albums) {
+      const albumLabel = `"${album.title || album.album || album._id}"`;
+      const trackCount = (album.tracks || []).length;
+      migLog(`Album ${albumLabel}: ${trackCount} track(s)`);
+
       const updatedTracks = [];
       let needsPatch = false;
       for (const track of album.tracks || []) {
         const audioFile = track.audioFile || '';
-        if (audioFile && !audioFile.startsWith('http')) {
-          // Local path — upload to R2
-          if (fs.existsSync(audioFile)) {
-            const filename = path.basename(audioFile);
-            // MongoDB documents use album.title (not album.album) for the album name.
-            const objectKey = `audio/${mongoUserId}/${album.artist || 'Unknown'}/${album.title || 'Unknown'}/${filename}`;
-            try {
-              const r2Url = await _uploadTrackToR2(audioFile, objectKey);
-              if (r2Url) {
-                updatedTracks.push({ track_number: track.trackNumber || 0, audio_file: r2Url });
-                needsPatch = true;
-              }
-            } catch (e) {
-              console.error('[migrate-local-to-r2] Upload failed:', filename, e.message);
-            }
+        migLog(`  Track ${track.trackNumber || '?'} audioFile="${audioFile}"`);
+
+        if (!audioFile) {
+          migLog(`  -> Skipped: audioFile is empty`);
+          continue;
+        }
+        if (audioFile.startsWith('http')) {
+          migLog(`  -> Skipped: already an HTTP URL`);
+          continue;
+        }
+
+        // Local path — check file exists before attempting upload
+        const exists = fs.existsSync(audioFile);
+        migLog(`  -> Local path, fs.existsSync=${exists}`);
+        if (!exists) {
+          migLog(`  -> Skipped: file not found on disk`);
+          continue;
+        }
+
+        const filename = path.basename(audioFile);
+        // MongoDB documents use album.title (not album.album) for the album name.
+        const objectKey = `audio/${mongoUserId}/${album.artist || 'Unknown'}/${album.title || 'Unknown'}/${filename}`;
+        migLog(`  -> Uploading to R2 key: ${objectKey}`);
+        try {
+          const r2Url = await _uploadTrackToR2(audioFile, objectKey);
+          if (r2Url) {
+            migLog(`  -> Upload SUCCESS: ${r2Url}`);
+            updatedTracks.push({ track_number: track.trackNumber || 0, audio_file: r2Url });
+            needsPatch = true;
+          } else {
+            migLog(`  -> Upload returned null URL (R2_ACCOUNT_ID may be unset)`);
           }
+        } catch (e) {
+          migLog(`  -> Upload FAILED: ${e.message}`);
         }
       }
+
       if (needsPatch && updatedTracks.length > 0) {
-        await fetch('http://127.0.0.1:8000/api/mongo/update-track-urls/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          // Include mongo_user_id so the backend can verify album ownership.
-          body: JSON.stringify({ album_id: album._id, tracks: updatedTracks, mongo_user_id: mongoUserId }),
-        });
-        totalPatched += updatedTracks.length;
-        console.log('[migrate-local-to-r2] Patched album:', album.album, updatedTracks.length, 'tracks');
+        migLog(`Patching MongoDB for album ${albumLabel} — ${updatedTracks.length} track URL(s) to update`);
+        try {
+          const patchRes = await fetch('http://127.0.0.1:8000/api/mongo/update-track-urls/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            // Include mongo_user_id so the backend can verify album ownership.
+            body: JSON.stringify({ album_id: album._id, tracks: updatedTracks, mongo_user_id: mongoUserId }),
+          });
+          const patchBody = await patchRes.json().catch(() => ({}));
+          migLog(`MongoDB patch response HTTP ${patchRes.status}: ${JSON.stringify(patchBody)}`);
+          totalPatched += updatedTracks.length;
+        } catch (patchErr) {
+          migLog(`MongoDB patch FAILED for album ${albumLabel}: ${patchErr.message}`);
+        }
+      } else {
+        migLog(`Album ${albumLabel}: nothing to patch`);
       }
     }
+
+    migLog(`Migration complete — ${totalPatched} track(s) patched across all albums`);
     return { ok: true, patched: totalPatched };
   } catch (err) {
-    console.error('[migrate-local-to-r2] Error:', err);
+    migLog(`Unhandled error: ${err.message}\n${err.stack}`);
     return { error: err.message };
   }
 });
