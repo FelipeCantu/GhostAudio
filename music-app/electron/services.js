@@ -312,7 +312,14 @@ const Services = {
                 console.error('[Electron ripCD] Request error:', err);
                 if (!settled) {
                     settled = true;
-                    reject(err);
+                    // ERR_NETWORK_IO_SUSPENDED: Electron paused the connection mid-stream
+                    // (common during long CD rips). The rip may have finished on disk.
+                    // Resolve so main.js can attempt disk-based recovery instead of showing an error.
+                    if (err.message && err.message.includes('SUSPENDED')) {
+                        resolve({ status: 'suspended', albumId: savedAlbumId });
+                    } else {
+                        reject(err);
+                    }
                 }
             });
 

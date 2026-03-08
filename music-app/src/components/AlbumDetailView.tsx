@@ -2,38 +2,51 @@
 
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { ArrowLeft, Disc, Play, Pause, Clock, ListPlus, Check, Shuffle, Heart, MoreHorizontal } from "lucide-react";
+import { ArrowLeft, Disc, Play, Pause, Clock, ListPlus, Check, Shuffle, Heart, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { usePlayer } from "@/context/PlayerContext";
 import { usePlaylist } from "@/context/PlaylistContext";
-import { Album, Track, PlaylistItem } from "@/services/api";
+import { Album, Track, PlaylistItem, api } from "@/services/api";
+import { useAuth } from "@/context/AuthContext";
+import EditAlbumModal from "@/components/EditAlbumModal";
 
 interface AlbumDetailViewProps {
     album: Album;
     onBack: () => void;
+    onAlbumUpdated?: (updated: { title: string; artist: string; coverArt: string }) => void;
 }
 
-export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps) {
+export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: AlbumDetailViewProps) {
+    const { user } = useAuth();
     const { currentTrack, isPlaying, playTrack } = usePlayer();
     const { playlists, addItemsToPlaylist } = usePlaylist();
     const [imgError, setImgError] = useState(false);
     const [showPlaylistMenu, setShowPlaylistMenu] = useState(false);
+    const [showMoreMenu, setShowMoreMenu] = useState(false);
+    const [showEditModal, setShowEditModal] = useState(false);
+    const [localAlbum, setLocalAlbum] = useState<any>(album);
+    const [localTracks, setLocalTracks] = useState<Track[]>([]);
     const [addedToast, setAddedToast] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+    const moreMenuRef = useRef<HTMLDivElement>(null);
+    const isLocalImport = (album as any).source === 'local_import';
+
+    useEffect(() => {
+        setLocalTracks((album.tracks || []).map(mapTrack));
+    }, [album]);
 
     useEffect(() => {
         const handler = (e: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-                setShowPlaylistMenu(false);
-            }
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowPlaylistMenu(false);
+            if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) setShowMoreMenu(false);
         };
-        if (showPlaylistMenu) document.addEventListener('mousedown', handler);
+        document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
-    }, [showPlaylistMenu]);
+    }, []);
 
     if (!album) return null;
 
     // Handle MongoDB (coverArt) and Django (cover_art) formats
-    const coverArt = (album as any).coverArt || album.cover_art;
+    const coverArt = (localAlbum as any).coverArt || localAlbum.cover_art;
 
     // Map MongoDB tracks to player-compatible format
     const mapTrack = (track: any, index: number): Track => {
@@ -46,7 +59,7 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
         };
     };
 
-    const tracks: Track[] = (album.tracks || []).map(mapTrack);
+    const tracks = localTracks;
 
     // Album info for the player
     const albumInfo = {
@@ -91,7 +104,30 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
         return currentTrack?.audio_file === track.audio_file;
     };
 
+    const handleDeleteTrack = async (e: React.MouseEvent, track: Track) => {
+        e.stopPropagation();
+        if (!user?.id) return;
+        const albumId = (localAlbum as any)._id || String(localAlbum.id);
+        try {
+            await api.library.deleteTrack(albumId, track.track_number, user.id);
+            setLocalTracks(prev => prev.filter(t => t.track_number !== track.track_number));
+        } catch (err) {
+            console.error('Failed to delete track:', err);
+        }
+    };
+
     return (
+        <>
+        {showEditModal && (
+            <EditAlbumModal
+                album={localAlbum}
+                onClose={() => setShowEditModal(false)}
+                onSaved={(updated) => {
+                    setLocalAlbum((prev: any) => ({ ...prev, ...updated }));
+                    onAlbumUpdated?.(updated);
+                }}
+            />
+        )}
         <div className="relative flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Background Blur Effect */}
             {coverArt && (
@@ -140,9 +176,9 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                 {/* Album Info */}
                 <div className="flex flex-col justify-end text-center md:text-left flex-1 min-w-0">
                     <p className="text-sm font-bold uppercase tracking-widest text-primary mb-2">Album</p>
-                    <h1 className="text-4xl md:text-6xl font-black text-white mb-2 tracking-tight leading-tight">{album.title}</h1>
+                    <h1 className="text-4xl md:text-6xl font-black text-white mb-2 tracking-tight leading-tight">{localAlbum.title}</h1>
                     <div className="flex items-center gap-3 justify-center md:justify-start text-xl text-zinc-300 mb-6">
-                        <span className="font-medium text-white">{album.artist}</span>
+                        <span className="font-medium text-white">{localAlbum.artist}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />
                         <span className="text-zinc-400">{new Date((album as any).createdAt || album.created_at).getFullYear() || new Date().getFullYear()}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />
@@ -201,10 +237,31 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                             <Heart size={18} />
                         </button>
 
-                        {/* More */}
-                        <button className="p-3.5 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white border border-white/10 hover:border-white/20 transition-all" title="More options">
-                            <MoreHorizontal size={18} />
-                        </button>
+                        {/* More options dropdown */}
+                        <div className="relative" ref={moreMenuRef}>
+                            <button
+                                onClick={() => setShowMoreMenu(v => !v)}
+                                className="p-3.5 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white border border-white/10 hover:border-white/20 transition-all"
+                                title="More options"
+                            >
+                                <MoreHorizontal size={18} />
+                            </button>
+                            {showMoreMenu && (
+                                <div className="absolute top-full left-0 mt-2 w-44 bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                                    {isLocalImport ? (
+                                        <button
+                                            onClick={() => { setShowMoreMenu(false); setShowEditModal(true); }}
+                                            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors"
+                                        >
+                                            <Pencil size={14} className="text-zinc-500" />
+                                            Edit Album
+                                        </button>
+                                    ) : (
+                                        <p className="px-4 py-3 text-xs text-zinc-600">No options available</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Toast */}
@@ -271,13 +328,24 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                                         {track.title}
                                     </p>
                                     <p className="text-sm text-zinc-500 truncate group-hover:text-zinc-400">
-                                        {album.artist}
+                                        {localAlbum.artist}
                                     </p>
                                 </div>
 
-                                {/* Duration */}
-                                <div className={`text-sm font-medium font-mono ${isCurrent ? 'text-white' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
-                                    {track.duration || '--:--'}
+                                {/* Duration + delete */}
+                                <div className="flex items-center gap-2">
+                                    <span className={`text-sm font-medium font-mono ${isCurrent ? 'text-white' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
+                                        {track.duration || '--:--'}
+                                    </span>
+                                    {isLocalImport && (
+                                        <button
+                                            onClick={e => handleDeleteTrack(e, track)}
+                                            className="opacity-0 group-hover:opacity-100 p-1 rounded-lg text-zinc-600 hover:text-red-400 transition-all"
+                                            title="Remove track"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         );
@@ -285,5 +353,6 @@ export default function AlbumDetailView({ album, onBack }: AlbumDetailViewProps)
                 </div>
             </div>
         </div>
+        </>
     );
 }

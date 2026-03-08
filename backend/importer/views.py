@@ -158,6 +158,29 @@ def mongo_upload_audio(request):
     return Response({'url': url})
 
 
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
+def mongo_upload_cover(request):
+    """Upload a cover art image to R2 and return the public URL."""
+    user_id = request.data.get('user_id')
+    album_title = request.data.get('album_title', 'Unknown')
+    artist = request.data.get('artist', 'Unknown Artist')
+    image_file = request.FILES.get('file')
+    if not user_id or not image_file:
+        return Response({'error': 'user_id and file required'}, status=400)
+    import tempfile
+    ext = os.path.splitext(image_file.name)[1] or '.jpg'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        for chunk in image_file.chunks():
+            tmp.write(chunk)
+        tmp_path = tmp.name
+    object_key = f"covers/{user_id}/{artist}/{album_title}/cover{ext}"
+    url = _upload_to_r2(tmp_path, object_key)
+    os.unlink(tmp_path)
+    return Response({'url': url})
+
+
 # --- Auth Views ---
 
 class RegisterView(generics.CreateAPIView):
@@ -618,6 +641,64 @@ def mongo_delete_album(request, album_id):
         return Response({'error': str(e)}, status=500)
 
 
+@api_view(['DELETE'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
+def mongo_delete_track(request, album_id, track_number):
+    """Remove a single track from an album by track number."""
+    user_id = request.query_params.get('user_id')
+    if not user_id:
+        return Response({'error': 'user_id required'}, status=400)
+    try:
+        client = _get_mongo_client()
+        db = client.get_database()
+        result = db['albums'].update_one(
+            {'_id': ObjectId(album_id), 'user': ObjectId(user_id)},
+            {'$pull': {'tracks': {'trackNumber': track_number}}}
+        )
+        if result.matched_count == 0:
+            return Response({'error': 'Album not found or not authorized'}, status=404)
+        return Response({'status': 'deleted'})
+    except Exception as e:
+        logger.error(f"mongo_delete_track failed: {e}")
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['PATCH'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
+def mongo_update_album(request, album_id):
+    """Update title, artist, and/or coverArt on a locally imported album."""
+    user_id = request.data.get('user_id')
+    if not user_id:
+        return Response({'error': 'user_id required'}, status=400)
+
+    updates = {}
+    if 'title' in request.data:
+        updates['title'] = request.data['title']
+    if 'artist' in request.data:
+        updates['artist'] = request.data['artist']
+    if 'cover_art' in request.data:
+        updates['coverArt'] = request.data['cover_art']
+
+    if not updates:
+        return Response({'error': 'Nothing to update'}, status=400)
+
+    try:
+        client = _get_mongo_client()
+        db = client.get_database()
+        result = db['albums'].update_one(
+            {'_id': ObjectId(album_id), 'user': ObjectId(user_id), 'source': 'local_import'},
+            {'$set': updates}
+        )
+        if result.matched_count == 0:
+            return Response({'error': 'Album not found or not editable'}, status=404)
+        return Response({'status': 'updated'})
+    except Exception as e:
+        logger.error(f"mongo_update_album failed: {e}")
+        return Response({'error': str(e)}, status=500)
+
+
 @api_view(['POST'])
 @authentication_classes([])
 @permission_classes([permissions.AllowAny])
@@ -649,8 +730,9 @@ def mongo_import_local(request):
             'user': ObjectId(user_id),
             'title': title,
             'artist': artist,
-            'coverArt': '',
+            'coverArt': data.get('cover_art', ''),
             'tracks': tracks,
+            'source': 'local_import',
             'createdAt': datetime.now()
         }
 

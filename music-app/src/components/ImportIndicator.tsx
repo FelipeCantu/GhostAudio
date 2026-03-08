@@ -20,7 +20,7 @@ export default function ImportIndicator() {
     const [expanded, setExpanded] = useState(false);
 
     useEffect(() => {
-        if (importStatus === 'ripping') {
+        if (importStatus === 'ripping' || importStatus === 'uploading') {
             setVisible(true);
             setExpanded(false);
         } else if (importStatus === 'completed') {
@@ -63,6 +63,8 @@ export default function ImportIndicator() {
                         className={`rounded-2xl border backdrop-blur-xl shadow-2xl overflow-hidden transition-colors ${
                             importStatus === 'ripping'
                                 ? 'bg-[#0d1b2a]/90 border-[#f4d35e]/25'
+                                : importStatus === 'uploading'
+                                ? 'bg-[#0d1b2a]/90 border-blue-500/25'
                                 : importStatus === 'completed'
                                 ? 'bg-[#0d1b2a]/90 border-green-500/25'
                                 : 'bg-[#0d1b2a]/90 border-red-500/25'
@@ -79,6 +81,11 @@ export default function ImportIndicator() {
                                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#f4d35e] opacity-75" />
                                     <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#f4d35e]" />
                                 </span>
+                            ) : importStatus === 'uploading' ? (
+                                <span className="relative flex h-2.5 w-2.5 shrink-0">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-400" />
+                                </span>
                             ) : importStatus === 'completed' ? (
                                 <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
@@ -94,17 +101,21 @@ export default function ImportIndicator() {
                                 <p className={`text-xs font-semibold truncate leading-none ${
                                     importStatus === 'ripping'
                                         ? 'text-white'
+                                        : importStatus === 'uploading'
+                                        ? 'text-blue-300'
                                         : importStatus === 'completed'
                                         ? 'text-green-300'
                                         : 'text-red-300'
                                 }`}>
                                     {importStatus === 'ripping'
                                         ? `Importing ${albumName}`
+                                        : importStatus === 'uploading'
+                                        ? `Uploading ${albumName}`
                                         : importStatus === 'completed'
                                         ? 'Import complete'
                                         : 'Import failed'}
                                 </p>
-                                {importStatus === 'ripping' && (
+                                {(importStatus === 'ripping' || importStatus === 'uploading') && (
                                     <p className="text-[10px] text-zinc-500 mt-0.5 leading-none">
                                         {progressPct}%
                                         {totalTracks > 0 ? ` · Track ${currentTrack}/${totalTracks}` : ''}
@@ -122,14 +133,14 @@ export default function ImportIndicator() {
                             </div>
 
                             {/* Circular progress ring */}
-                            {importStatus === 'ripping' && (
+                            {(importStatus === 'ripping' || importStatus === 'uploading') && (
                                 <div className="relative w-7 h-7 shrink-0">
                                     <svg className="w-7 h-7 -rotate-90" viewBox="0 0 28 28">
                                         <circle cx="14" cy="14" r="11" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-zinc-700" />
                                         <circle
                                             cx="14" cy="14" r="11"
                                             fill="none" stroke="currentColor" strokeWidth="2.5"
-                                            className="text-[#f4d35e] transition-all duration-300"
+                                            className={`transition-all duration-300 ${importStatus === 'uploading' ? 'text-blue-400' : 'text-[#f4d35e]'}`}
                                             strokeDasharray={`${2 * Math.PI * 11}`}
                                             strokeDashoffset={`${2 * Math.PI * 11 * (1 - progressPct / 100)}`}
                                             strokeLinecap="round"
@@ -150,12 +161,12 @@ export default function ImportIndicator() {
                             </svg>
                         </button>
 
-                        {/* Inline progress bar (always visible when ripping) */}
-                        {importStatus === 'ripping' && (
+                        {/* Inline progress bar (always visible when ripping or uploading) */}
+                        {(importStatus === 'ripping' || importStatus === 'uploading') && (
                             <div className="px-3.5 pb-2.5">
                                 <div className="w-full bg-zinc-800 rounded-full h-0.5 overflow-hidden">
                                     <div
-                                        className="h-full bg-gradient-to-r from-[#f4d35e] to-amber-400 rounded-full transition-all duration-300"
+                                        className={`h-full rounded-full transition-all duration-300 ${importStatus === 'uploading' ? 'bg-gradient-to-r from-blue-500 to-blue-400' : 'bg-gradient-to-r from-[#f4d35e] to-amber-400'}`}
                                         style={{ width: `${progressPct}%` }}
                                     />
                                 </div>
@@ -180,7 +191,7 @@ export default function ImportIndicator() {
 
                                         {/* Action buttons */}
                                         <div className="flex gap-2">
-                                            {importStatus === 'ripping' && (
+                                            {(importStatus === 'ripping' || importStatus === 'uploading') && (
                                                 <button
                                                     onClick={cancelImport}
                                                     className="flex-1 text-xs font-semibold py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-colors"

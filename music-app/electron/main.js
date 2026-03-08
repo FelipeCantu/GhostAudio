@@ -311,39 +311,172 @@ ipcMain.handle('rip-cd', async (event, args) => {
 
     console.log('[IPC rip-cd] Rip done, albumId:', result.albumId, 'trackPaths:', trackPaths.length);
 
-    // Upload tracks to R2 from Electron (Node.js TLS works; frozen Python TLS does not)
-    if (result.albumId && trackPaths.length > 0 && process.env.R2_ACCOUNT_ID) {
-      const updatedTracks = [];
-      for (let i = 0; i < trackPaths.length; i++) {
-        const localPath = trackPaths[i];
-        const filename = path.basename(localPath);
-        const objectKey = `audio/${mongoUserId}/${artist}/${album}/${filename}`;
-        if (event.sender && !event.sender.isDestroyed()) {
-          event.sender.send('rip-progress', { type: 'progress', message: `Uploading to cloud: ${i + 1} / ${trackPaths.length}` });
-        }
-        try {
-          const r2Url = await _uploadTrackToR2(localPath, objectKey);
-          const trackNumMatch = filename.match(/^(\d+)/);
-          const trackNumber = trackNumMatch ? parseInt(trackNumMatch[1]) : 0;
-          if (r2Url) updatedTracks.push({ track_number: trackNumber, audio_file: r2Url });
-          console.log('[IPC rip-cd] Uploaded:', filename, '->', r2Url);
-        } catch (uploadErr) {
-          console.error('[IPC rip-cd] R2 upload failed for', filename, uploadErr.message);
-        }
+    // Recovery: ERR_NETWORK_IO_SUSPENDED severed the SSE stream before Django sent the
+    // 'saved' event. Wait for Django to finish, check MongoDB, and create the album if needed.
+    if (result.status === 'suspended' && !result.albumId && mongoUserId) {
+      const os = require('os');
+      const logPath = path.join(os.homedir(), 'ghost_app_debug.log');
+      const recLog = (msg) => {
+        const line = `[${new Date().toISOString()}] [rip-cd recovery] ${msg}\n`;
+        console.log(line.trimEnd());
+        try { fs.appendFileSync(logPath, line); } catch (_) {}
+      };
+      recLog('Stream suspended — waiting 5s for Django to finish saving...');
+      if (event.sender && !event.sender.isDestroyed()) {
+        event.sender.send('rip-progress', {
+          type: 'progress', stage: 'uploading', message: 'Finalizing import...'
+        });
+      }
+      await new Promise(r => setTimeout(r, 5000));
+
+      // Scan disk for ripped audio files
+      const sanitize = (s) => `${s}`.split('').filter(c => /[a-zA-Z0-9 ._-]/.test(c)).join('').trim();
+      const libraryBase = path.join(os.homedir(), 'Music', 'GhostAudio Library');
+      const albumFolder = path.join(libraryBase, sanitize(artist), sanitize(album));
+      const audioExts = new Set(['.wav', '.flac', '.mp3', '.m4a', '.aac', '.ogg']);
+      let diskTrackFiles = [];
+      if (fs.existsSync(albumFolder)) {
+        diskTrackFiles = fs.readdirSync(albumFolder)
+          .filter(f => audioExts.has(path.extname(f).toLowerCase()))
+          .sort()
+          .map(f => path.join(albumFolder, f));
+      }
+      recLog(`Disk scan: ${diskTrackFiles.length} audio file(s) in ${albumFolder}`);
+
+      if (diskTrackFiles.length === 0) {
+        recLog('No audio files on disk — rip did not complete');
+        return { status: 'error', message: 'Import was interrupted and no audio files were found on disk.' };
       }
 
-      if (updatedTracks.length > 0) {
-        try {
-          await fetch('http://127.0.0.1:8000/api/mongo/update-track-urls/', {
+      try {
+        // Check if Django saved the album to MongoDB while we waited
+        const libRes = await fetch(`http://127.0.0.1:8000/api/mongo/library/?user_id=${mongoUserId}`);
+        const libData = await libRes.json();
+        const allAlbums = Array.isArray(libData) ? libData : [];
+        const djangoAlbum = allAlbums.find(a => a.title === album && a.artist === artist);
+
+        if (djangoAlbum) {
+          recLog(`Album found in MongoDB (Django saved it): ${djangoAlbum._id}`);
+          result.albumId = djangoAlbum._id;
+          result.status = 'completed';
+        } else {
+          // Django didn't save — create the album from disk scan + CD metadata
+          recLog('Album not in MongoDB — creating from disk scan');
+          const metaTracks = ((args.metadata || {}).tracks || []).sort((a, b) =>
+            parseInt(a.track_number) - parseInt(b.track_number)
+          );
+          const tracks = diskTrackFiles.map((filePath, idx) => {
+            const meta = metaTracks[idx] || {};
+            return {
+              title: meta.title || path.basename(filePath, path.extname(filePath)),
+              trackNumber: parseInt(meta.track_number) || (idx + 1),
+              audioFile: filePath,
+              duration: meta.duration_ms ? String(Math.round(parseInt(meta.duration_ms) / 1000)) : '0'
+            };
+          });
+          const saveRes = await fetch('http://127.0.0.1:8000/api/mongo/import-local/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // Include mongo_user_id so the backend can verify album ownership.
-            body: JSON.stringify({ album_id: result.albumId, tracks: updatedTracks, mongo_user_id: mongoUserId }),
+            body: JSON.stringify({
+              user_id: mongoUserId,
+              title: album,
+              artist: artist,
+              year: (args.metadata || {}).year || '',
+              tracks: tracks
+            })
           });
-          console.log('[IPC rip-cd] MongoDB track URLs updated with R2 paths');
-        } catch (patchErr) {
-          console.error('[IPC rip-cd] Failed to update track URLs in MongoDB:', patchErr.message);
+          if (saveRes.ok) {
+            const saveData = await saveRes.json();
+            recLog(`Album created in MongoDB: ${saveData.album_id}`);
+            result.albumId = saveData.album_id;
+            result.status = 'completed';
+          } else {
+            recLog(`Failed to save album to MongoDB: HTTP ${saveRes.status}`);
+          }
         }
+      } catch (recErr) {
+        recLog(`Recovery error: ${recErr.message}`);
+      }
+    }
+
+    // Auto-sync to R2: fetch album from MongoDB, upload any local-path tracks to R2,
+    // then patch MongoDB so the web browser can play them immediately.
+    // Mirrors migrate-local-to-r2 (which is proven to work) but targets this specific album.
+    if (result.albumId && mongoUserId && process.env.R2_ACCOUNT_ID) {
+      const os = require('os');
+      const logPath = path.join(os.homedir(), 'ghost_app_debug.log');
+      const ripLog = (msg) => {
+        const line = `[${new Date().toISOString()}] [rip-cd auto-sync] ${msg}\n`;
+        console.log(line.trimEnd());
+        try { fs.appendFileSync(logPath, line); } catch (_) {}
+      };
+
+      try {
+        ripLog(`Starting auto-sync for album ${result.albumId}`);
+
+        // Fetch fresh album data so we see the actual audioFile URLs saved by Python
+        const libRes = await fetch(`http://127.0.0.1:8000/api/mongo/library/?user_id=${mongoUserId}`);
+        const libData = await libRes.json();
+        const albums = Array.isArray(libData) ? libData : [];
+        const savedAlbum = albums.find(a => a._id === result.albumId);
+
+        if (!savedAlbum) {
+          ripLog(`Album ${result.albumId} not found in library — skipping auto-sync`);
+        } else {
+          const tracksToUpload = (savedAlbum.tracks || []).filter(t => {
+            const url = t.audioFile || '';
+            return url && !url.startsWith('http');
+          });
+
+          ripLog(`${tracksToUpload.length} track(s) need R2 upload (have local paths)`);
+
+          const updatedTracks = [];
+          for (let i = 0; i < tracksToUpload.length; i++) {
+            const track = tracksToUpload[i];
+            const localPath = track.audioFile;
+            const filename = path.basename(localPath);
+            const objectKey = `audio/${mongoUserId}/${savedAlbum.artist || 'Unknown'}/${savedAlbum.title || 'Unknown'}/${filename}`;
+
+            if (event.sender && !event.sender.isDestroyed()) {
+              event.sender.send('rip-progress', {
+                type: 'progress',
+                stage: 'uploading',
+                message: `Uploading to cloud: ${i + 1} / ${tracksToUpload.length}`,
+                current: i + 1,
+                total: tracksToUpload.length,
+              });
+            }
+
+            ripLog(`Uploading track ${track.trackNumber}: ${filename}`);
+            try {
+              const r2Url = await _uploadTrackToR2(localPath, objectKey);
+              if (r2Url) {
+                updatedTracks.push({ track_number: track.trackNumber, audio_file: r2Url });
+                ripLog(`Uploaded: ${filename} -> ${r2Url.slice(0, 60)}`);
+              } else {
+                ripLog(`Upload returned null for ${filename} (R2 may not be configured)`);
+              }
+            } catch (uploadErr) {
+              ripLog(`Upload FAILED for ${filename}: ${uploadErr.message}`);
+            }
+          }
+
+          if (updatedTracks.length > 0) {
+            const patchRes = await fetch('http://127.0.0.1:8000/api/mongo/update-track-urls/', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ album_id: result.albumId, tracks: updatedTracks, mongo_user_id: mongoUserId }),
+            });
+            ripLog(`MongoDB patch: HTTP ${patchRes.status} — ${updatedTracks.length} track(s) updated`);
+          } else if (tracksToUpload.length > 0) {
+            ripLog('No tracks successfully uploaded — MongoDB not patched');
+          } else {
+            ripLog('All tracks already have R2 URLs — no patch needed');
+          }
+        }
+      } catch (syncErr) {
+        console.error('[IPC rip-cd] Auto-sync error:', syncErr.message);
+        try { fs.appendFileSync(logPath, `[${new Date().toISOString()}] [rip-cd auto-sync] ERROR: ${syncErr.message}\n`); } catch (_) {}
       }
     }
 
@@ -595,56 +728,74 @@ ipcMain.handle('import-local-files', async (event, args) => {
     fs.mkdirSync(albumFolder, { recursive: true });
   }
 
-  // Copy files, upload each to R2 directly from Node.js, build track list
-  const tracks = [];
+  // Helper: upload a single track to R2 with up to maxRetries attempts.
+  // Returns the R2 URL on success, or null if R2 is not configured.
+  // Throws if all retries are exhausted — caller decides how to handle.
+  const uploadWithRetry = async (localPath, objectKey, maxRetries = 3) => {
+    if (!process.env.R2_ACCOUNT_ID) return null;
+    let lastErr;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const url = await _uploadTrackToR2(localPath, objectKey);
+        if (url) return url;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[Import Local] R2 upload attempt ${attempt}/${maxRetries} failed:`, err.message);
+        if (attempt < maxRetries) await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
+    }
+    throw lastErr || new Error('R2 upload returned no URL');
+  };
+
+  // Step 1: Copy all files to the local library folder first.
+  const fileInfos = [];
   for (let i = 0; i < files.length; i++) {
     const srcFile = files[i];
     const fileName = path.basename(srcFile);
     const destFile = path.join(albumFolder, fileName);
+    if (srcFile !== destFile) fs.copyFileSync(srcFile, destFile);
 
-    // Copy into library folder if the source is not already there
-    if (srcFile !== destFile) {
-      fs.copyFileSync(srcFile, destFile);
-    }
-
-    // Extract track title: strip leading track numbers (e.g. "01 - ", "02. ")
     let trackTitle = path.basename(fileName, path.extname(fileName));
     trackTitle = trackTitle.replace(/^\d+[\s\-_.]*/, '').trim() || `Track ${i + 1}`;
+    fileInfos.push({ destFile, fileName, trackTitle, trackNumber: i + 1 });
+  }
 
-    // --- R2 upload directly from Node.js (bypasses frozen Python backend TLS issues) ---
-    // Progress event mirrors the rip-cd handler so the UI can show upload status.
-    let audioUrl = destFile; // graceful fallback: local path if R2 is not configured or fails
-    if (process.env.R2_ACCOUNT_ID) {
-      if (event.sender && !event.sender.isDestroyed()) {
-        event.sender.send('rip-progress', {
-          type: 'progress',
-          message: `Uploading to cloud: ${i + 1} / ${files.length}`
-        });
-      }
+  // Step 2: Upload all tracks to R2 before touching MongoDB.
+  // If R2 is configured, every track must have an R2 URL — no local paths allowed
+  // in MongoDB because the web browser cannot play them.
+  const tracks = [];
+  const r2Configured = !!process.env.R2_ACCOUNT_ID;
+
+  for (let i = 0; i < fileInfos.length; i++) {
+    const { destFile, fileName, trackTitle, trackNumber } = fileInfos[i];
+
+    if (event.sender && !event.sender.isDestroyed()) {
+      event.sender.send('rip-progress', {
+        type: 'progress',
+        message: `Uploading to cloud: ${i + 1} / ${fileInfos.length}`
+      });
+    }
+
+    let audioUrl = destFile; // fallback for when R2 is not configured
+    if (r2Configured) {
       const objectKey = `audio/${mongo_user_id}/${artistName}/${albumName}/${fileName}`;
       try {
-        const r2Url = await _uploadTrackToR2(destFile, objectKey);
-        if (r2Url) {
-          audioUrl = r2Url;
-          console.log('[Import Local] Uploaded to R2:', fileName, '->', r2Url);
-        }
+        audioUrl = await uploadWithRetry(destFile, objectKey, 3);
+        console.log('[Import Local] Uploaded to R2:', fileName, '->', audioUrl);
       } catch (uploadErr) {
-        // Non-fatal: fall back to the local file path so the import always succeeds
-        console.warn('[Import Local] R2 upload failed, using local path:', uploadErr.message);
+        // All 3 attempts failed — abort the entire import so the user gets a clear
+        // error rather than silently saving a local path that won't play in the browser.
+        console.error('[Import Local] R2 upload failed after retries:', uploadErr.message);
+        return { success: false, error: `Cloud upload failed for "${fileName}": ${uploadErr.message}. Please check your internet connection and try again.` };
       }
     }
 
-    tracks.push({
-      title: trackTitle,
-      trackNumber: i + 1,
-      audioFile: audioUrl,
-      duration: '00:00'
-    });
+    tracks.push({ title: trackTitle, trackNumber, audioFile: audioUrl, duration: '0' });
   }
 
-  // Persist the album to MongoDB via the backend import-local endpoint.
-  // This endpoint only writes to MongoDB — it does not touch R2 — so it is
-  // safe to call from both dev and frozen builds.
+  // Step 3: All uploads succeeded — now save to MongoDB.
+  // At this point every track.audioFile is either an R2 https:// URL or a local path
+  // (only when R2 is not configured, i.e. desktop-only mode).
   try {
     const response = await fetch('http://127.0.0.1:8000/api/mongo/import-local/', {
       method: 'POST',
@@ -657,12 +808,10 @@ ipcMain.handle('import-local-files', async (event, args) => {
       })
     });
 
-    if (!response.ok) {
-      throw new Error(`Backend returned ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`Backend returned ${response.status}`);
 
     const data = await response.json();
-    console.log('[Import Local] Album saved to MongoDB:', data);
+    console.log('[Import Local] Album saved to MongoDB with', tracks.length, 'track(s), all with R2 URLs:', data);
     return { success: true, album: data };
   } catch (err) {
     console.error('[Import Local] Error saving album to MongoDB:', err);

@@ -8,7 +8,7 @@ export interface TrackStatus {
     percent: number;
 }
 
-export type ImportStatus = 'idle' | 'ripping' | 'completed' | 'error';
+export type ImportStatus = 'idle' | 'ripping' | 'uploading' | 'completed' | 'error';
 
 interface ImportState {
     importStatus: ImportStatus;
@@ -107,7 +107,12 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
                         return { ...initialState, message: 'Import cancelled.' };
                     }
 
-                    if (data.stage === 'reading' || data.stage === 'track_progress') {
+                    if (data.stage === 'uploading') {
+                        next.importStatus = 'uploading';
+                        next.currentTrack = data.current ?? prev.currentTrack;
+                        next.totalTracks = data.total ?? prev.totalTracks;
+                        next.overallPercent = data.total ? Math.round((data.current / data.total) * 100) : prev.overallPercent;
+                    } else if (data.stage === 'reading' || data.stage === 'track_progress') {
                         next.overallPercent = data.current;
                     } else if (
                         data.stage === 'extracting' ||
@@ -317,7 +322,7 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
     return (
         <ImportContext.Provider value={{
             ...state,
-            isImporting: state.importStatus === 'ripping',
+            isImporting: state.importStatus === 'ripping' || state.importStatus === 'uploading',
             startImport,
             cancelImport,
             resetImport,

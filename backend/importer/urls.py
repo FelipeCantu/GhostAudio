@@ -18,12 +18,15 @@ urlpatterns = [
     path('mongo/auth/login/', views.mongo_auth_login, name='mongo_auth_login'),
     path('mongo/auth/me/', views.mongo_auth_me, name='mongo_auth_me'),
     path('mongo/upload-audio/', views.mongo_upload_audio, name='mongo_upload_audio'),
+    path('mongo/upload-cover/', views.mongo_upload_cover, name='mongo_upload_cover'),
 
     # MongoDB Direct (Desktop App)
     path('mongo/update-track-urls/', views.mongo_update_track_urls, name='mongo_update_track_urls'),
     path('mongo/import-local/', views.mongo_import_local, name='mongo_import_local'),
     path('mongo/library/', views.mongo_library, name='mongo_library'),
     path('mongo/library/<str:album_id>/', views.mongo_delete_album, name='mongo_delete_album'),
+    path('mongo/library/<str:album_id>/edit/', views.mongo_update_album, name='mongo_update_album'),
+    path('mongo/library/<str:album_id>/tracks/<int:track_number>/', views.mongo_delete_track, name='mongo_delete_track'),
     path('mongo/stats/', views.mongo_stats, name='mongo_stats'),
 
     # Playlists

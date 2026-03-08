@@ -193,7 +193,14 @@ export const api = {
                     mongo_user_id: mongoUserId
                 });
             }
-            throw new Error("Delete only available in Desktop App");
+            const res = await fetch(`${NEXT_API_URL}/api/mongo/library/${albumId}/?user_id=${mongoUserId}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Failed to delete album');
+            return await res.json();
+        },
+        deleteTrack: async (albumId: string, trackNumber: number, mongoUserId: string): Promise<any> => {
+            const res = await fetch(`${NEXT_API_URL}/api/mongo/library/${albumId}/tracks/${trackNumber}/?user_id=${mongoUserId}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Failed to delete track');
+            return await res.json();
         },
         importLocalFiles: async (mongoUserId?: string): Promise<any> => {
             if (isElectron()) {
@@ -202,6 +209,77 @@ export const api = {
                 });
             }
             throw new Error("Import only available in Desktop App");
+        },
+        updateAlbum: async (
+            albumId: string,
+            mongoUserId: string,
+            fields: { title?: string; artist?: string; cover_art?: string }
+        ): Promise<any> => {
+            const res = await fetch(`${NEXT_API_URL}/api/mongo/library/${albumId}/edit/`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: mongoUserId, ...fields }),
+            });
+            if (!res.ok) throw new Error(`Update failed: ${res.status}`);
+            return await res.json();
+        },
+        uploadCoverArt: async (
+            file: File,
+            albumTitle: string,
+            artist: string,
+            mongoUserId: string
+        ): Promise<string> => {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('user_id', mongoUserId);
+            formData.append('album_title', albumTitle);
+            formData.append('artist', artist);
+            const res = await fetch(`${NEXT_API_URL}/api/mongo/upload-cover/`, {
+                method: 'POST',
+                body: formData,
+            });
+            if (!res.ok) throw new Error(`Cover upload failed: ${res.status}`);
+            const { url } = await res.json();
+            return url;
+        },
+        webImportFiles: async (
+            files: File[],
+            albumTitle: string,
+            artist: string,
+            mongoUserId: string,
+            coverArtUrl: string,
+            onProgress?: (uploaded: number, total: number) => void
+        ): Promise<any> => {
+            const tracks = [];
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('user_id', mongoUserId);
+                formData.append('album_title', albumTitle);
+                formData.append('artist', artist);
+
+                const res = await fetch(`${NEXT_API_URL}/api/mongo/upload-audio/`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                if (!res.ok) throw new Error(`Upload failed for "${file.name}": ${res.status}`);
+                const { url } = await res.json();
+
+                let trackTitle = file.name.replace(/\.[^/.]+$/, '');
+                trackTitle = trackTitle.replace(/^\d+[\s\-_.]*/, '').trim() || `Track ${i + 1}`;
+
+                tracks.push({ title: trackTitle, trackNumber: i + 1, audioFile: url, duration: '0' });
+                onProgress?.(i + 1, files.length);
+            }
+
+            const res = await fetch(`${NEXT_API_URL}/api/mongo/import-local/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: mongoUserId, title: albumTitle, artist, tracks, cover_art: coverArtUrl }),
+            });
+            if (!res.ok) throw new Error(`Failed to save album: ${res.status}`);
+            return await res.json();
         }
     },
     system: {
