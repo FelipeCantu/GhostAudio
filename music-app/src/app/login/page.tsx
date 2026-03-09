@@ -6,119 +6,177 @@ import Link from "next/link";
 import Image from "next/image";
 import { api } from "@/services/api";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import { Disc, Eye, EyeOff } from "lucide-react";
+import { motion } from "framer-motion";
 
 export default function LoginPage() {
-    const { login } = useAuth();
-    const [username, setUsername] = useState("");
-    const [password, setPassword] = useState("");
-    const [isLoading, setIsLoading] = useState(false);
-    const [success, setSuccess] = useState("");
-    const [error, setError] = useState("");
+  const { login } = useAuth();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [success, setSuccess] = useState("");
+  const [error, setError] = useState("");
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setSuccess("");
-        setIsLoading(true);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    setIsLoading(true);
 
-        try {
-            // Use Unified API
-            const data = await api.auth.login({ username, password });
+    try {
+      const data = await api.auth.login({ username, password });
+      if (!data.error) {
+        setSuccess("Login successful! Redirecting...");
+        login(data.access!, data.user);
+      } else {
+        setError(data.error || "Login failed");
+        setIsLoading(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred.");
+      setIsLoading(false);
+    }
+  };
 
-            if (!data.error) {
-                setSuccess("Login successful! Redirecting...");
-                login(data.access!, data.user);
-            } else {
-                setError(data.error || "Login failed");
-                setIsLoading(false);
-            }
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "An error occurred.");
-            setIsLoading(false);
-        }
-    };
+  return (
+    <div className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-[#0d1b2a] text-[#faf0ca] px-4">
+      {/* Ambient glow */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-[-15%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-[#f4d35e]/6 blur-[120px]" />
+        <div className="absolute bottom-[-15%] right-[-10%] w-[50vw] h-[50vw] rounded-full bg-[#ee964b]/6 blur-[120px]" />
+      </div>
 
-    return (
-        <div className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-background text-foreground">
-            {/* Dynamic Background */}
-            <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute top-[-10%] left-[-10%] w-[40vw] h-[40vw] rounded-full bg-primary/10 blur-[100px] animate-pulse" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-border/10 blur-[100px] animate-pulse delay-700" />
-            </div>
+      {/* Back to landing */}
+      <div className="absolute top-6 left-6">
+        <Link
+          href="/"
+          className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"
+        >
+          <Disc size={16} className="text-[#f4d35e]" />
+          <span className="font-bold text-white">DiZC</span>
+        </Link>
+      </div>
 
-            <div className="w-full max-w-md p-8 space-y-8 bg-black/40 backdrop-blur-xl rounded-3xl border border-white/10 shadow-2xl relative z-10">
-                <div className="flex flex-col items-center space-y-2">
-                    <div className="relative w-32 h-32 mb-4">
-                        <Image
-                            src="/logo.png"
-                            alt="DiZC Logo"
-                            fill
-                            className="object-contain drop-shadow-lg"
-                            priority
-                        />
-                    </div>
-                    <p className="text-zinc-400 text-sm">Sign in to your account</p>
-                </div>
-
-                {error && (
-                    <div className="p-4 bg-red-900/30 border border-red-500/20 text-red-200 text-sm rounded-xl animate-in fade-in slide-in-from-top-2">
-                        {error}
-                    </div>
-                )}
-
-                {success && (
-                    <div className="p-4 bg-green-900/30 border border-green-500/20 text-green-200 text-sm rounded-xl animate-in fade-in slide-in-from-top-2">
-                        {success}
-                    </div>
-                )}
-
-                <form onSubmit={handleSubmit} className="space-y-5">
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-zinc-300">Username</label>
-                        <input
-                            type="text"
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
-                            disabled={isLoading}
-                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all disabled:opacity-50"
-                            required
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-zinc-300">Password</label>
-                        <input
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            disabled={isLoading}
-                            className="w-full bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all disabled:opacity-50"
-                            required
-                        />
-                    </div>
-
-                    <button
-                        type="submit"
-                        disabled={isLoading}
-                        className="w-full py-3.5 px-4 bg-gradient-to-r from-primary to-border text-primary-foreground font-bold rounded-xl hover:shadow-lg hover:shadow-primary/20 transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed flex justify-center items-center"
-                    >
-                        {isLoading ? (
-                            <>
-                                <LoadingSpinner className="mr-2" />
-                                Signing In...
-                            </>
-                        ) : (
-                            "Sign In"
-                        )}
-                    </button>
-                </form>
-
-                <div className="text-center text-sm text-zinc-500">
-                    Don't have an account?{" "}
-                    <Link href="/register" className="text-primary hover:text-border font-medium hover:underline transition-colors">
-                        Register
-                    </Link>
-                </div>
-            </div>
+      <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="w-full max-w-sm relative z-10"
+      >
+        {/* Logo Card */}
+        <div className="flex flex-col items-center mb-8">
+          <div className="relative w-20 h-20 mb-5">
+            <Image
+              src="/logo.png"
+              alt="DiZC Logo"
+              fill
+              className="object-contain drop-shadow-[0_0_20px_rgba(244,211,94,0.25)]"
+              priority
+            />
+          </div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Welcome back</h1>
+          <p className="text-zinc-500 text-sm mt-1">Sign in to your DiZC account</p>
         </div>
-    );
+
+        {/* Form Card */}
+        <div className="bg-white/5 backdrop-blur-xl rounded-3xl border border-white/8 shadow-2xl p-7 space-y-5">
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 bg-red-500/10 border border-red-500/20 text-red-300 text-sm rounded-xl"
+            >
+              {error}
+            </motion.div>
+          )}
+          {success && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 bg-green-500/10 border border-green-500/20 text-green-300 text-sm rounded-xl"
+            >
+              {success}
+            </motion.div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                Username
+              </label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                disabled={isLoading}
+                autoComplete="username"
+                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-[#f4d35e]/40 focus:border-[#f4d35e]/50 transition-all disabled:opacity-50 min-h-[48px]"
+                placeholder="your_username"
+                required
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={isLoading}
+                  autoComplete="current-password"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 pr-12 text-white text-sm placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-[#f4d35e]/40 focus:border-[#f4d35e]/50 transition-all disabled:opacity-50 min-h-[48px]"
+                  placeholder="••••••••"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors p-1 min-w-[32px] min-h-[32px] flex items-center justify-center"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full py-3.5 px-4 bg-gradient-to-r from-[#f4d35e] to-[#ee964b] text-[#0d3b66] font-bold rounded-xl hover:shadow-lg hover:shadow-[#f4d35e]/20 transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex justify-center items-center gap-2 min-h-[52px] text-sm"
+            >
+              {isLoading ? (
+                <>
+                  <LoadingSpinner className="mr-1" />
+                  Signing In...
+                </>
+              ) : (
+                "Sign In"
+              )}
+            </button>
+          </form>
+
+          <div className="text-center text-sm text-zinc-500 pt-1">
+            Don&apos;t have an account?{" "}
+            <Link
+              href="/register"
+              className="text-[#f4d35e] hover:text-[#ee964b] font-semibold transition-colors"
+            >
+              Create one free
+            </Link>
+          </div>
+        </div>
+
+        <p className="text-center text-zinc-600 text-xs mt-6">
+          By signing in you agree to our{" "}
+          <a href="#" className="hover:text-zinc-400 transition-colors underline">Terms</a>
+          {" "}and{" "}
+          <a href="#" className="hover:text-zinc-400 transition-colors underline">Privacy Policy</a>.
+        </p>
+      </motion.div>
+    </div>
+  );
 }

@@ -32,6 +32,8 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Prevent horizontal scroll globally */
+  overflow-x: hidden;
 }
 
 /* Premium Selection */
@@ -40,37 +42,63 @@ body {
   color: #fff;
 }
 
-/* Scrollbar */
+/* Custom scrollbar — thin and branded */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--background);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--muted);
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 99px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-foreground);
+  background: rgba(255, 255, 255, 0.18);
 }
 
+/* Music bar animation (used by existing components) */
 @keyframes music-bar {
-
-  0%,
-  100% {
-    height: 4px;
-  }
-
-  50% {
-    height: 100%;
-  }
+  0%, 100% { height: 4px; }
+  50% { height: 100%; }
 }
 
+/* Gradient animation for the hero headline */
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.animate-gradient {
+  animation: gradient-shift 4s ease infinite;
+}
+
+/* Mask utility for fade-out bottom effect */
 .mask-image-gradient {
   mask-image: linear-gradient(to bottom, black 0%, black 40%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 0%, black 40%, transparent 100%);
+}
+
+/* Safe area padding for iOS notch support */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Focus visible ring — keyboard accessible */
+:focus-visible {
+  outline: 2px solid rgba(244, 211, 94, 0.6);
+  outline-offset: 2px;
+}
+
+/* Prevent text size adjustment on mobile orientation change */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
