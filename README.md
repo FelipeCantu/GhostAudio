@@ -17,7 +17,7 @@
 
 | Platform | Link |
 |---|---|
-| Windows Desktop | [DiZC-Setup-0.2.0-beta.exe](https://github.com/FelipeCantu/GhostAudio/releases/download/v0.2.0-beta/DiZC-Setup-0.2.0-beta.exe) |
+| Windows Desktop | [DiZC-Setup-0.2.0-beta.exe](https://github.com/FelipeCantu/GhostAudio/releases/download/v0.2.0-beta/DiZC.Setup.0.2.0-beta.exe) |
 | Web Player | [dizc.vercel.app](https://dizc.vercel.app) |
 | Mobile (PWA) | Visit the web player on your phone → Add to Home Screen |
 
