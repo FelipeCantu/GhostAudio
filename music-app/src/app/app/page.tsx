@@ -4,9 +4,10 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { usePlayer } from "@/context/PlayerContext";
 import DashboardLayout from "@/components/DashboardLayout";
 import Link from "next/link";
-import { Disc, PlayCircle, Plus, Music2, Clock, TrendingUp, Import } from "lucide-react";
+import { Disc, PlayCircle, Plus, Music2, Clock, TrendingUp, Import, History } from "lucide-react";
 import { api } from "@/services/api";
 
 interface DashboardStats {
@@ -24,6 +25,7 @@ interface DashboardStats {
 
 export default function Home() {
   const { user, isAuthenticated, isLoading, token } = useAuth();
+  const { recentlyPlayed, playTrack } = usePlayer();
   const router = useRouter();
   const [stats, setStats] = useState<DashboardStats>({
     total_albums: 0,
@@ -65,6 +67,9 @@ export default function Home() {
   const greetingHour = new Date().getHours();
   const greeting =
     greetingHour < 12 ? "Good morning" : greetingHour < 18 ? "Good afternoon" : "Good evening";
+
+  // Show last 5 recently played entries
+  const recentFive = recentlyPlayed.slice(0, 5);
 
   return (
     <DashboardLayout>
@@ -154,6 +159,63 @@ export default function Home() {
             );
           })}
         </div>
+
+        {/* Recently Played — only shown when there's history */}
+        {recentFive.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+          >
+            <div className="flex items-center gap-2 mb-4">
+              <History size={16} className="text-zinc-500" />
+              <h3 className="text-base font-bold text-white">Recently Played</h3>
+            </div>
+
+            {/* Horizontal scroll row */}
+            <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide -mx-1 px-1">
+              {recentFive.map((entry, i) => {
+                const cover = entry.albumInfo?.coverArt;
+                return (
+                  <motion.button
+                    key={`recent-${entry.track.id}-${entry.playedAt}`}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: 0.28 + i * 0.05 }}
+                    onClick={() =>
+                      playTrack(
+                        entry.track,
+                        undefined,
+                        entry.albumInfo ?? undefined
+                      )
+                    }
+                    className="flex flex-col items-center gap-2 flex-shrink-0 min-w-[80px] group"
+                    aria-label={`Play ${entry.track.title}`}
+                  >
+                    {/* Cover art thumbnail */}
+                    <div className="w-[60px] h-[60px] rounded-xl overflow-hidden bg-black/40 border border-white/8 flex-shrink-0 group-hover:border-[#f4d35e]/40 group-hover:shadow-lg group-hover:shadow-[#f4d35e]/10 transition-all">
+                      {cover ? (
+                        <img
+                          src={cover}
+                          alt={entry.albumInfo?.title ?? entry.track.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900">
+                          <Disc size={24} className="text-zinc-600 group-hover:text-zinc-400 transition-colors" />
+                        </div>
+                      )}
+                    </div>
+                    {/* Track title */}
+                    <p className="text-xs text-zinc-400 group-hover:text-[#f4d35e] transition-colors text-center leading-tight w-full truncate px-0.5">
+                      {entry.track.title}
+                    </p>
+                  </motion.button>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
 
         {/* Recently Added */}
         <motion.div

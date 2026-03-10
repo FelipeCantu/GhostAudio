@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useRef, useEffect } from "react";
+import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
 import { Track, Playlist } from "@/services/api";
 
 interface AlbumInfo {
@@ -8,6 +8,14 @@ interface AlbumInfo {
     artist: string;
     coverArt?: string;
 }
+
+interface RecentlyPlayedEntry {
+    track: Track;
+    albumInfo: AlbumInfo | null;
+    playedAt: number;
+}
+
+type RepeatMode = "off" | "one" | "all";
 
 interface PlayerContextType {
     currentTrack: Track | null;
@@ -26,9 +34,48 @@ interface PlayerContextType {
     setVolume: (v: number) => void;
     isLoading: boolean;
     error: string | null;
+    // Shuffle + Repeat
+    shuffleMode: boolean;
+    toggleShuffle: () => void;
+    repeatMode: RepeatMode;
+    cycleRepeat: () => void;
+    // Recently played + play counts
+    recentlyPlayed: RecentlyPlayedEntry[];
+    playCounts: Record<string, number>;
+    // Sleep timer
+    sleepMinutes: number | null;
+    setSleepTimer: (minutes: number | null) => void;
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
+
+const RECENTLY_PLAYED_KEY = "dizc_recently_played";
+const PLAY_COUNTS_KEY = "dizc_play_counts";
+const MAX_RECENTLY_PLAYED = 20;
+
+function getTrackKey(track: Track, albumInfo?: AlbumInfo | null): string {
+    return `${track.title}::${albumInfo?.artist ?? ""}`;
+}
+
+function loadFromStorage<T>(key: string, fallback: T): T {
+    if (typeof window === "undefined") return fallback;
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        return JSON.parse(raw) as T;
+    } catch {
+        return fallback;
+    }
+}
+
+function saveToStorage(key: string, value: unknown): void {
+    if (typeof window === "undefined") return;
+    try {
+        localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+        // quota exceeded or private browsing — fail silently
+    }
+}
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
@@ -41,18 +88,169 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // We use a ref for the audio element to manage it imperatively
+    // New state
+    const [shuffleMode, setShuffleMode] = useState(false);
+    const [repeatMode, setRepeatMode] = useState<RepeatMode>("off");
+    const [recentlyPlayed, setRecentlyPlayed] = useState<RecentlyPlayedEntry[]>([]);
+    const [playCounts, setPlayCounts] = useState<Record<string, number>>({});
+    const [sleepMinutes, setSleepMinutesState] = useState<number | null>(null);
+
+    // Refs for the audio element and stale-closure-safe state
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const currentTrackRef = useRef<Track | null>(null);
+    const currentAlbumRef = useRef<AlbumInfo | null>(null);
+    const queueRef = useRef<Track[]>([]);
+    const shuffleModeRef = useRef(false);
+    const repeatModeRef = useRef<RepeatMode>("off");
+    const sleepTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Stable ref to nextTrackFromRefs so the audio `ended` handler (registered
+    // once at mount) always calls the latest version without being stale.
+    const nextTrackFromRefsRef = useRef<() => void>(() => {});
+
+    // Keep refs in sync with state
+    useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
+    useEffect(() => { currentAlbumRef.current = currentAlbum; }, [currentAlbum]);
+    useEffect(() => { queueRef.current = queue; }, [queue]);
+    useEffect(() => { shuffleModeRef.current = shuffleMode; }, [shuffleMode]);
+    useEffect(() => { repeatModeRef.current = repeatMode; }, [repeatMode]);
+
+    // Load persisted data on mount (SSR-safe)
+    useEffect(() => {
+        setRecentlyPlayed(loadFromStorage<RecentlyPlayedEntry[]>(RECENTLY_PLAYED_KEY, []));
+        setPlayCounts(loadFromStorage<Record<string, number>>(PLAY_COUNTS_KEY, {}));
+    }, []);
+
+    // ─── Helpers ────────────────────────────────────────────────────────────────
+
+    const addToRecentlyPlayed = useCallback((track: Track, albumInfo: AlbumInfo | null) => {
+        setRecentlyPlayed(prev => {
+            // Remove any existing entry for this track (dedup by title)
+            const filtered = prev.filter(e => e.track.title !== track.title);
+            const next = [{ track, albumInfo, playedAt: Date.now() }, ...filtered].slice(0, MAX_RECENTLY_PLAYED);
+            saveToStorage(RECENTLY_PLAYED_KEY, next);
+            return next;
+        });
+    }, []);
+
+    const incrementPlayCount = useCallback((track: Track, albumInfo: AlbumInfo | null) => {
+        const key = getTrackKey(track, albumInfo);
+        setPlayCounts(prev => {
+            const next = { ...prev, [key]: (prev[key] ?? 0) + 1 };
+            saveToStorage(PLAY_COUNTS_KEY, next);
+            return next;
+        });
+    }, []);
+
+    // ─── Internal play function that accepts resolved src ────────────────────────
+
+    const playTrackInternal = useCallback((
+        track: Track,
+        albumInfo: AlbumInfo | null,
+        resolvedQueue: Track[],
+        skipAddToRecent = false,
+    ) => {
+        const audioFile = (track as Record<string, unknown>).audioFile as string | undefined ?? track.audio_file;
+
+        if (!audioFile) {
+            console.error("[Player] ERROR: No audio file on track!", track);
+            return;
+        }
+
+        if (!skipAddToRecent) {
+            addToRecentlyPlayed(track, albumInfo);
+        }
+
+        setCurrentTrack(track);
+        currentTrackRef.current = track;
+        setCurrentAlbum(albumInfo);
+        currentAlbumRef.current = albumInfo;
+        setQueue(resolvedQueue);
+        queueRef.current = resolvedQueue;
+        setIsPlaying(true);
+        setIsLoading(true);
+        setError(null);
+        setProgress(0);
+        setDuration(0);
+
+        if (audioRef.current) {
+            let src = audioFile;
+            const isLocalPath = src && !src.startsWith("http") && !src.startsWith("localfile://") && !src.startsWith("file://");
+            const isElectron = typeof window !== "undefined" && (window as Record<string, unknown>).electronAPI !== undefined;
+            if (isLocalPath) {
+                if (!isElectron) {
+                    setError("This track is stored locally and can only be played in the Desktop App.");
+                    setIsPlaying(false);
+                    setIsLoading(false);
+                    return;
+                }
+                src = `localfile://${src.replace(/\\/g, "/")}`;
+            }
+            console.log("[Player] Playing src:", src);
+            audioRef.current.volume = volume;
+            audioRef.current.src = src;
+            audioRef.current.play().catch(e => {
+                if (e.name !== "AbortError") console.error("[Player] Playback failed:", e);
+            });
+        }
+    }, [addToRecentlyPlayed, volume]);
+
+    // ─── nextTrack (ref-safe, used inside ended handler) ─────────────────────────
+
+    const nextTrackFromRefs = useCallback(() => {
+        const track = currentTrackRef.current;
+        const q = queueRef.current;
+        const album = currentAlbumRef.current;
+
+        if (!track) return;
+
+        // Repeat one — restart current track
+        if (repeatModeRef.current === "one") {
+            if (audioRef.current) {
+                audioRef.current.currentTime = 0;
+                audioRef.current.play().catch(e => {
+                    if (e.name !== "AbortError") console.error("[Player] Repeat-one play failed:", e);
+                });
+            }
+            return;
+        }
+
+        if (q.length === 0) return;
+
+        // Shuffle — pick random track that isn't the current one
+        if (shuffleModeRef.current && q.length > 1) {
+            const others = q.filter(t => t.id !== track.id);
+            const next = others[Math.floor(Math.random() * others.length)];
+            playTrackInternal(next, album, q);
+            return;
+        }
+
+        const currentIndex = q.findIndex(t => t.id === track.id);
+
+        if (currentIndex < q.length - 1) {
+            playTrackInternal(q[currentIndex + 1], album, q);
+        } else if (repeatModeRef.current === "all") {
+            // Loop back to start
+            playTrackInternal(q[0], album, q);
+        } else {
+            // End of queue, stop
+            setIsPlaying(false);
+            setProgress(0);
+        }
+    }, [playTrackInternal]);
+
+    // Keep the ref always pointing to the latest version of nextTrackFromRefs
+    useEffect(() => {
+        nextTrackFromRefsRef.current = nextTrackFromRefs;
+    }, [nextTrackFromRefs]);
+
+    // ─── Audio element setup ──────────────────────────────────────────────────────
 
     useEffect(() => {
-        // Initialize Audio object only on client side
         audioRef.current = new Audio();
-
-        const audio = audioRef.current; // capture ref for cleanup
+        const audio = audioRef.current;
 
         const handleTimeUpdate = () => {
             setProgress(audio.currentTime);
-            // Also check duration on time update as a fallback
             if (audio.duration && isFinite(audio.duration) && audio.duration > 0) {
                 setDuration(audio.duration);
             }
@@ -75,7 +273,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 setDuration(audio.duration);
             }
         };
-        const handleEnded = () => nextTrack();
+
+        // Use refs to avoid stale closures — this handler is registered once at
+        // mount, so all mutable state is read through refs.
+        const handleEnded = () => {
+            const track = currentTrackRef.current;
+            const album = currentAlbumRef.current;
+            if (track) {
+                incrementPlayCount(track, album);
+                addToRecentlyPlayed(track, album);
+            }
+            // Call through the ref so we always invoke the latest version
+            nextTrackFromRefsRef.current();
+        };
 
         const handleError = (e: Event) => {
             const audioEl = e.target as HTMLAudioElement;
@@ -111,7 +321,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             audio.removeEventListener("waiting", handleWaiting);
             audio.removeEventListener("playing", handlePlaying);
         };
+        // nextTrackFromRefs and incrementPlayCount/addToRecentlyPlayed are stable useCallback refs
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // ─── Public API ───────────────────────────────────────────────────────────────
 
     const setVolume = (v: number) => {
         const clamped = Math.max(0, Math.min(1, v));
@@ -123,55 +337,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     const playTrack = (track: Track, newQueue?: Track[], albumInfo?: AlbumInfo) => {
         console.log("[Player] playTrack called with:", track);
-
-        // Handle both camelCase (MongoDB) and snake_case (Django) field names
-        const audioFile = (track as any).audioFile || track.audio_file;
-
-        if (!audioFile) {
-            console.error("[Player] ERROR: No audio file on track!", track);
-            return;
-        }
-
-        if (newQueue) {
-            setQueue(newQueue);
-        }
-
-        if (albumInfo) {
-            setCurrentAlbum(albumInfo);
-        }
-
-        setCurrentTrack(track);
-        setIsPlaying(true);
-        setIsLoading(true);
-        setError(null);
-        // Reset progress and duration for new track
-        setProgress(0);
-        setDuration(0);
-
-        if (audioRef.current) {
-            // In Electron, use custom 'localfile' protocol for local audio files
-            let src = audioFile;
-            console.log("[Player] Original audio file:", src);
-            const isLocalPath = src && !src.startsWith('http') && !src.startsWith('localfile://') && !src.startsWith('file://');
-            const isElectron = typeof window !== 'undefined' && (window as any).electronAPI !== undefined;
-            if (isLocalPath) {
-                if (!isElectron) {
-                    setError("This track is stored locally and can only be played in the Desktop App.");
-                    setIsPlaying(false);
-                    setIsLoading(false);
-                    return;
-                }
-                // Use localfile:// protocol which is handled by Electron main process
-                src = `localfile://${src.replace(/\\/g, '/')}`;
-            }
-            console.log("[Player] Playing src:", src);
-
-            audioRef.current.volume = volume;
-            audioRef.current.src = src;
-            audioRef.current.play().catch(e => {
-                if (e.name !== 'AbortError') console.error("[Player] Playback failed:", e);
-            });
-        }
+        const resolvedQueue = newQueue ?? queueRef.current;
+        const resolvedAlbum = albumInfo ?? currentAlbumRef.current;
+        playTrackInternal(track, resolvedAlbum, resolvedQueue);
     };
 
     const playPlaylist = (playlist: Playlist, startIndex = 0) => {
@@ -186,48 +354,55 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }));
         const albumInfo: AlbumInfo = {
             title: playlist.name,
-            artist: '',
+            artist: "",
             coverArt: playlist.cover_arts?.[0],
         };
-        playTrack(tracks[startIndex], tracks, albumInfo);
+        playTrackInternal(tracks[startIndex], albumInfo, tracks);
     };
 
     const togglePlay = () => {
-        if (!currentTrack) return;
-
+        if (!currentTrackRef.current) return;
         if (isPlaying) {
             audioRef.current?.pause();
         } else {
             audioRef.current?.play().catch(e => console.error("Playback failed:", e));
         }
-        setIsPlaying(!isPlaying);
+        setIsPlaying(prev => !prev);
     };
 
     const nextTrack = () => {
-        if (!currentTrack || queue.length === 0) return;
-
-        const currentIndex = queue.findIndex(t => t.id === currentTrack.id);
-        if (currentIndex < queue.length - 1) {
-            playTrack(queue[currentIndex + 1]);
-        } else {
-            // End of queue
-            setIsPlaying(false);
-            setProgress(0);
-        }
+        nextTrackFromRefs();
     };
 
     const prevTrack = () => {
-        if (!currentTrack || queue.length === 0) return;
+        const track = currentTrackRef.current;
+        const q = queueRef.current;
+        const album = currentAlbumRef.current;
 
-        // If we are more than 3 seconds in, restart track
+        if (!track) return;
+
+        // If more than 3 seconds in, restart track
         if (audioRef.current && audioRef.current.currentTime > 3) {
             audioRef.current.currentTime = 0;
             return;
         }
 
-        const currentIndex = queue.findIndex(t => t.id === currentTrack.id);
+        if (q.length === 0) return;
+
+        // Shuffle — pick random track
+        if (shuffleModeRef.current && q.length > 1) {
+            const others = q.filter(t => t.id !== track.id);
+            const prev = others[Math.floor(Math.random() * others.length)];
+            playTrackInternal(prev, album, q);
+            return;
+        }
+
+        const currentIndex = q.findIndex(t => t.id === track.id);
         if (currentIndex > 0) {
-            playTrack(queue[currentIndex - 1]);
+            playTrackInternal(q[currentIndex - 1], album, q);
+        } else if (repeatModeRef.current === "all") {
+            // Wrap to end
+            playTrackInternal(q[q.length - 1], album, q);
         }
     };
 
@@ -236,7 +411,46 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             audioRef.current.currentTime = time;
             setProgress(time);
         }
-    }
+    };
+
+    const toggleShuffle = () => {
+        setShuffleMode(prev => {
+            const next = !prev;
+            shuffleModeRef.current = next;
+            return next;
+        });
+    };
+
+    const cycleRepeat = () => {
+        setRepeatMode(prev => {
+            const order: RepeatMode[] = ["off", "all", "one"];
+            const next = order[(order.indexOf(prev) + 1) % order.length];
+            repeatModeRef.current = next;
+            return next;
+        });
+    };
+
+    const setSleepTimer = (minutes: number | null) => {
+        // Clear any existing timer
+        if (sleepTimeoutRef.current !== null) {
+            clearTimeout(sleepTimeoutRef.current);
+            sleepTimeoutRef.current = null;
+        }
+
+        setSleepMinutesState(minutes);
+
+        if (minutes !== null && minutes > 0) {
+            sleepTimeoutRef.current = setTimeout(() => {
+                // Pause playback
+                if (audioRef.current) {
+                    audioRef.current.pause();
+                }
+                setIsPlaying(false);
+                setSleepMinutesState(null);
+                sleepTimeoutRef.current = null;
+            }, minutes * 60 * 1000);
+        }
+    };
 
     return (
         <PlayerContext.Provider value={{
@@ -255,14 +469,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             volume,
             setVolume,
             isLoading,
-            error
+            error,
+            shuffleMode,
+            toggleShuffle,
+            repeatMode,
+            cycleRepeat,
+            recentlyPlayed,
+            playCounts,
+            sleepMinutes,
+            setSleepTimer,
         }}>
             {children}
         </PlayerContext.Provider>
     );
 }
-
-
 
 export const usePlayer = () => {
     const context = useContext(PlayerContext);

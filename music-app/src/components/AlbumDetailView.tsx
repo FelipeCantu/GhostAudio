@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { ArrowLeft, Disc, Play, Pause, Clock, ListPlus, Check, Shuffle, Heart, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Disc, Play, Pause, Clock, ListPlus, Check, Shuffle, Heart, MoreHorizontal, Pencil, Trash2, ImagePlus } from "lucide-react";
 import { usePlayer } from "@/context/PlayerContext";
 import { usePlaylist } from "@/context/PlaylistContext";
 import { Album, Track, PlaylistItem, api } from "@/services/api";
@@ -26,6 +26,8 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
     const [localAlbum, setLocalAlbum] = useState<any>(album);
     const [localTracks, setLocalTracks] = useState<Track[]>([]);
     const [addedToast, setAddedToast] = useState<string | null>(null);
+    const [isFetchingCover, setIsFetchingCover] = useState(false);
+    const [coverFetchMessage, setCoverFetchMessage] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     const moreMenuRef = useRef<HTMLDivElement>(null);
     const isLocalImport = (album as any).source === 'local_import';
@@ -116,6 +118,48 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
         }
     };
 
+    const handleFetchCoverArt = async () => {
+        if (!user?.id) return;
+        setIsFetchingCover(true);
+        setCoverFetchMessage(null);
+
+        try {
+            const albumId = (localAlbum as any)._id || String(localAlbum.id);
+            const mbUrl = `https://musicbrainz.org/ws/2/release/?query=release:${encodeURIComponent(localAlbum.title)}+AND+artist:${encodeURIComponent(localAlbum.artist)}&fmt=json&limit=1`;
+            const mbRes = await fetch(mbUrl, {
+                headers: { 'User-Agent': 'DiZC/1.0 (dizc.audio)' }
+            });
+            if (!mbRes.ok) throw new Error('MusicBrainz request failed');
+            const mbData = await mbRes.json();
+
+            const release = mbData.releases?.[0];
+            if (!release?.id) {
+                setCoverFetchMessage('No cover art found');
+                setTimeout(() => setCoverFetchMessage(null), 2500);
+                return;
+            }
+
+            const coverUrl = `https://coverartarchive.org/release/${release.id}/front`;
+            // Verify the image is accessible before saving
+            const imgCheck = await fetch(coverUrl, { method: 'HEAD' });
+            if (!imgCheck.ok) {
+                setCoverFetchMessage('No cover art found');
+                setTimeout(() => setCoverFetchMessage(null), 2500);
+                return;
+            }
+
+            await api.library.updateAlbum(albumId, user.id, { cover_art: coverUrl });
+            setLocalAlbum((prev: any) => ({ ...prev, cover_art: coverUrl, coverArt: coverUrl }));
+            setImgError(false);
+            onAlbumUpdated?.({ title: localAlbum.title, artist: localAlbum.artist, coverArt: coverUrl });
+        } catch {
+            setCoverFetchMessage('Could not fetch cover art');
+            setTimeout(() => setCoverFetchMessage(null), 2500);
+        } finally {
+            setIsFetchingCover(false);
+        }
+    };
+
     return (
         <>
         {showEditModal && (
@@ -195,6 +239,28 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                             Play Album
                         </button>
 
+                        {/* Fetch Cover Art — only shown when album has no cover */}
+                        {!coverArt && (
+                            <button
+                                onClick={handleFetchCoverArt}
+                                disabled={isFetchingCover}
+                                className="flex items-center gap-2 px-5 py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Fetch cover art from MusicBrainz"
+                            >
+                                {isFetchingCover ? (
+                                    <>
+                                        <div className="w-4 h-4 border-2 border-zinc-400 border-t-transparent rounded-full animate-spin" />
+                                        Fetching...
+                                    </>
+                                ) : (
+                                    <>
+                                        <ImagePlus size={16} />
+                                        Fetch Cover Art
+                                    </>
+                                )}
+                            </button>
+                        )}
+
                         {/* Shuffle */}
                         <button className="flex items-center gap-2 px-5 py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium">
                             <Shuffle size={16} />
@@ -264,11 +330,19 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                         </div>
                     </div>
 
-                    {/* Toast */}
+                    {/* Toast — playlist added */}
                     {addedToast && (
                         <div className="flex items-center gap-2 mt-3 text-sm text-[#f4d35e] animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <Check size={14} />
                             {addedToast}
+                        </div>
+                    )}
+
+                    {/* Toast — cover art fetch result */}
+                    {coverFetchMessage && (
+                        <div className="flex items-center gap-2 mt-3 text-sm text-zinc-400 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            <ImagePlus size={14} />
+                            {coverFetchMessage}
                         </div>
                     )}
                 </div>

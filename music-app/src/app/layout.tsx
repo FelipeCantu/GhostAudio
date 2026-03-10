@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
@@ -6,6 +6,7 @@ import { PlayerProvider } from "@/context/PlayerContext";
 import { ImportProvider } from "@/context/ImportContext";
 import { PlaylistProvider } from "@/context/PlaylistContext";
 import PlayerBar from "@/components/PlayerBar";
+import PWARegister from "@/components/PWARegister";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -17,9 +18,19 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  themeColor: "#000000",
+};
+
 export const metadata: Metadata = {
   title: "DiZC - The Future of Local Audio",
   description: "Experience bit-perfect playback, seamless CD ripping, and a stunning interface designed for audiophiles. Your music, uncompromised.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "DiZC",
+  },
   openGraph: {
     title: "DiZC - The Future of Local Audio",
     description: "Experience bit-perfect playback and seamless CD ripping. Your music, uncompromised.",
@@ -64,6 +75,7 @@ export default function RootLayout({
             </ImportProvider>
           </PlaylistProvider>
         </AuthProvider>
+        <PWARegister />
       </body>
     </html>
   );

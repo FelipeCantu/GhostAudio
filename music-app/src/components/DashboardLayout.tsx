@@ -3,11 +3,14 @@
 import { useState, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import ImportIndicator from "./ImportIndicator";
+import GlobalSearch from "./GlobalSearch";
+import KeyboardShortcutsModal from "./KeyboardShortcutsModal";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter, usePathname } from "next/navigation";
 import { Menu, Home, Library, Disc, ListMusic } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { api, Album } from "@/services/api";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -21,10 +24,20 @@ const mobileNavLinks = [
 ];
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, token, user } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [searchAlbums, setSearchAlbums] = useState<Album[]>([]);
   const router = useRouter();
   const pathname = usePathname();
+
+  // Fetch albums once for global search
+  useEffect(() => {
+    if (!token || !user?.id) return;
+    api.library.getAlbums(token, user.id).then(setSearchAlbums).catch(() => {
+      // Silently fail — search just won't have results
+    });
+  }, [token, user?.id]);
 
   // Close sidebar when route changes on mobile
   useEffect(() => {
@@ -118,6 +131,18 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </main>
       </div>
+
+      {/* Global Search Overlay */}
+      <GlobalSearch
+        albums={searchAlbums}
+        onOpenShortcuts={() => setShowShortcuts(true)}
+      />
+
+      {/* Keyboard Shortcuts Modal */}
+      <KeyboardShortcutsModal
+        isOpen={showShortcuts}
+        onClose={() => setShowShortcuts(false)}
+      />
 
       {/* Mobile Bottom Navigation Bar */}
       <nav
