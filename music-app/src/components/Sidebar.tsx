@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import PlaylistCoverArt from "@/components/PlaylistCoverArt";
+import StorageBar from "@/components/StorageBar";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -182,6 +183,13 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             </div>
           </div>
         </nav>
+
+        {/* Compact Storage Bar */}
+        {user && (
+          <div className="flex-shrink-0 px-4 pb-3">
+            <StorageBar variant="compact" />
+          </div>
+        )}
 
         {/* User Profile Footer */}
         <div className="flex-shrink-0 p-4 border-t border-white/5">

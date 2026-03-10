@@ -29,6 +29,15 @@ urlpatterns = [
     path('mongo/library/<str:album_id>/tracks/<int:track_number>/', views.mongo_delete_track, name='mongo_delete_track'),
     path('mongo/stats/', views.mongo_stats, name='mongo_stats'),
 
+    # Storage Quota
+    path('mongo/quota/', views.mongo_quota, name='mongo_quota'),
+    path('mongo/quota/migrate/', views.mongo_quota_migrate, name='mongo_quota_migrate'),
+
+    # Payments
+    path('mongo/payments/create-checkout/', views.create_checkout_session, name='create_checkout_session'),
+    path('mongo/payments/webhook/', views.stripe_webhook, name='stripe_webhook'),
+    path('mongo/payments/status/', views.payment_status, name='payment_status'),
+
     # Playlists
     path('mongo/playlists/', views.mongo_playlists, name='mongo_playlists'),
     path('mongo/playlists/<str:playlist_id>/', views.mongo_playlist_detail, name='mongo_playlist_detail'),

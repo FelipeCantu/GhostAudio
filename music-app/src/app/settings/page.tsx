@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { api } from "@/services/api";
 import { motion } from "framer-motion";
 import { useState } from "react";
+import Link from "next/link";
 import {
   User,
   Shield,
@@ -13,7 +14,9 @@ import {
   CloudUpload,
   CheckCircle2,
   Loader2,
+  Database,
 } from "lucide-react";
+import StorageBar from "@/components/StorageBar";
 
 interface SettingRowProps {
   label: string;
@@ -154,6 +157,21 @@ export default function SettingsPage() {
               Coming Soon
             </span>
           </SettingRow>
+        </SectionCard>
+
+        {/* Storage */}
+        <SectionCard icon={Database} title="Storage">
+          <div className="p-4 md:p-5 rounded-2xl bg-black/20">
+            <StorageBar variant="full" />
+          </div>
+          <div className="px-1 pt-1">
+            <Link
+              href="/upgrade"
+              className="text-[#f4d35e] text-xs font-medium hover:text-[#f0cc44] transition-colors"
+            >
+              View upgrade options →
+            </Link>
+          </div>
         </SectionCard>
 
         {/* Cloud Sync — Desktop only */}

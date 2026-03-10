@@ -16,6 +16,8 @@ dnspython
 python-dotenv
 boto3
 bcrypt
+# Payments
+stripe
 # Build & Serve
 pyinstaller
 waitress

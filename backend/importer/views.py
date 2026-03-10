@@ -19,6 +19,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 import jwt as pyjwt
 import bcrypt as _bcrypt
+import stripe
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,65 @@ _active_rips = {}   # session_id -> CDRipper instance
 _rips_lock = threading.Lock()
 
 _JWT_SECRET = os.environ.get('JWT_SECRET', 'fallback_secret')
+
+# --- Storage Plan Constants ---
+
+PLAN_LIMITS = {
+    'free':     5_368_709_120,    # 5 GB
+    'personal': 107_374_182_400,  # 100 GB
+    'lifetime': 214_748_364_800,  # 200 GB
+}
+DEFAULT_PLAN = 'free'
+DEFAULT_STORAGE_LIMIT = PLAN_LIMITS[DEFAULT_PLAN]
+
+
+# --- MongoDB Client Helper ---
+
+def _get_mongo_client():
+    """Return a pymongo MongoClient using the URI from Django settings."""
+    return MongoClient(
+        settings.MONGODB_URI,
+        serverSelectionTimeoutMS=20000,
+        socketTimeoutMS=10000,
+        connectTimeoutMS=5000,
+    )
+
+
+# --- Quota Helpers ---
+
+def _get_user_quota(mongo_user_id: str) -> dict:
+    """
+    Return quota fields for a user document.
+
+    Falls back to default free-tier values if the fields are absent so that
+    legacy users are never incorrectly blocked before migration runs.
+    """
+    db = _get_mongo_client().get_database()
+    user = db['users'].find_one(
+        {'_id': ObjectId(mongo_user_id)},
+        {'plan': 1, 'storage_used_bytes': 1, 'storage_limit_bytes': 1},
+    )
+    if not user:
+        return None
+    return {
+        'plan': user.get('plan', DEFAULT_PLAN),
+        'storage_used_bytes': user.get('storage_used_bytes', 0),
+        'storage_limit_bytes': user.get('storage_limit_bytes', DEFAULT_STORAGE_LIMIT),
+    }
+
+
+def _increment_storage(mongo_user_id: str, bytes_added: int) -> None:
+    """
+    Atomically increment storage_used_bytes for a user by bytes_added.
+
+    Uses $inc so concurrent uploads from the same account don't produce a
+    lost-update race condition.
+    """
+    db = _get_mongo_client().get_database()
+    db['users'].update_one(
+        {'_id': ObjectId(mongo_user_id)},
+        {'$inc': {'storage_used_bytes': bytes_added}},
+    )
 
 
 # --- R2 Helpers ---
@@ -91,7 +151,15 @@ def mongo_auth_register(request):
         if db['users'].find_one({'username': username}):
             return Response({'error': 'User already exists'}, status=400)
         hashed = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
-        user_doc = {'username': username, 'password': hashed, 'createdAt': datetime.now()}
+        user_doc = {
+            'username': username,
+            'password': hashed,
+            'createdAt': datetime.now(),
+            # Storage quota — new users start on the free tier
+            'plan': DEFAULT_PLAN,
+            'storage_used_bytes': 0,
+            'storage_limit_bytes': DEFAULT_STORAGE_LIMIT,
+        }
         if email:
             user_doc['email'] = email
         db['users'].insert_one(user_doc)
@@ -141,20 +209,78 @@ def mongo_auth_me(request):
 @authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def mongo_upload_audio(request):
-    user_id = request.data.get('user_id')
+    """
+    Upload an audio file to R2 and return its public URL.
+
+    Requires a valid JWT in the Authorization header.  Enforces per-user
+    storage quota: returns 403 if the upload would exceed the limit.
+    On success the user's storage_used_bytes is atomically incremented.
+    """
+    # --- Auth: resolve mongo_user_id from JWT ---
+    auth = request.META.get('HTTP_AUTHORIZATION', '')
+    mongo_user_id = None
+    if auth.startswith('Bearer '):
+        try:
+            payload = pyjwt.decode(auth[7:], _JWT_SECRET, algorithms=['HS256'])
+            mongo_user_id = payload.get('id')
+        except Exception:
+            pass
+
+    # Fall back to the legacy body param so existing desktop callers keep working
+    # while the JWT path is being rolled out.
+    user_id = mongo_user_id or request.data.get('user_id')
+
     album_title = request.data.get('album_title', 'Unknown')
     artist = request.data.get('artist', 'Unknown Artist')
     audio_file = request.FILES.get('file')
+
     if not user_id or not audio_file:
         return Response({'error': 'user_id and file required'}, status=400)
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+
+    # --- Measure file size before writing to disk ---
+    file_data = audio_file.read()
+    file_size = len(file_data)
+    audio_file.seek(0)
+
+    # --- Quota check ---
+    try:
+        quota = _get_user_quota(user_id)
+    except Exception as e:
+        logger.error(f"mongo_upload_audio quota lookup failed for {user_id}: {e}")
+        return Response({'error': 'Could not verify storage quota'}, status=500)
+
+    if quota is None:
+        return Response({'error': 'User not found'}, status=404)
+
+    if quota['storage_used_bytes'] + file_size > quota['storage_limit_bytes']:
+        return Response(
+            {
+                'error': 'storage_limit_reached',
+                'used': quota['storage_used_bytes'],
+                'limit': quota['storage_limit_bytes'],
+            },
+            status=403,
+        )
+
+    # --- Write to temp file and upload ---
     import tempfile
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.name)[1]) as tmp:
-        for chunk in audio_file.chunks():
-            tmp.write(chunk)
+        tmp.write(file_data)
         tmp_path = tmp.name
+
     object_key = f"audio/{user_id}/{artist}/{album_title}/{audio_file.name}"
     url = _upload_to_r2(tmp_path, object_key)
     os.unlink(tmp_path)
+
+    # --- Atomically record consumed bytes (only after successful upload) ---
+    try:
+        _increment_storage(user_id, file_size)
+    except Exception as e:
+        logger.error(f"mongo_upload_audio storage increment failed for {user_id}: {e}")
+        # Upload already succeeded — don't fail the response, just log.
+
     return Response({'url': url})
 
 
@@ -179,6 +305,101 @@ def mongo_upload_cover(request):
     url = _upload_to_r2(tmp_path, object_key)
     os.unlink(tmp_path)
     return Response({'url': url})
+
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
+def mongo_quota(request):
+    """
+    GET /api/mongo/quota/
+
+    Return the authenticated user's storage quota and current usage.
+
+    Response shape:
+        {
+            "plan": "free",
+            "storage_used_bytes": 1234567,
+            "storage_limit_bytes": 5368709120,
+            "storage_used_gb": 0.18,
+            "storage_limit_gb": 5.0,
+            "percent_used": 3.6
+        }
+    """
+    auth = request.META.get('HTTP_AUTHORIZATION', '')
+    if not auth.startswith('Bearer '):
+        return Response({'error': 'Authentication required'}, status=401)
+    try:
+        payload = pyjwt.decode(auth[7:], _JWT_SECRET, algorithms=['HS256'])
+        mongo_user_id = payload['id']
+    except Exception:
+        return Response({'error': 'Invalid token'}, status=401)
+
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+
+    try:
+        quota = _get_user_quota(mongo_user_id)
+    except Exception as e:
+        logger.error(f"mongo_quota error for {mongo_user_id}: {e}")
+        return Response({'error': 'Could not retrieve quota'}, status=500)
+
+    if quota is None:
+        return Response({'error': 'User not found'}, status=404)
+
+    used = quota['storage_used_bytes']
+    limit = quota['storage_limit_bytes']
+    gb_divisor = 1_073_741_824  # 1 GB in bytes
+    percent = round((used / limit) * 100, 2) if limit > 0 else 0.0
+
+    return Response({
+        'plan': quota['plan'],
+        'storage_used_bytes': used,
+        'storage_limit_bytes': limit,
+        'storage_used_gb': round(used / gb_divisor, 2),
+        'storage_limit_gb': round(limit / gb_divisor, 2),
+        'percent_used': percent,
+    })
+
+
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
+def mongo_quota_migrate(request):
+    """
+    POST /api/mongo/quota/migrate/
+
+    Back-fill quota fields on existing user documents that pre-date the quota
+    system.  Safe to run multiple times — only touches documents that are
+    missing at least one of the three quota fields.
+
+    Returns a count of documents updated.
+    """
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+
+    try:
+        db = _get_mongo_client().get_database()
+        result = db['users'].update_many(
+            # Match docs missing any of the three fields
+            {'$or': [
+                {'plan': {'$exists': False}},
+                {'storage_used_bytes': {'$exists': False}},
+                {'storage_limit_bytes': {'$exists': False}},
+            ]},
+            {'$set': {
+                'plan': DEFAULT_PLAN,
+                'storage_used_bytes': 0,
+                'storage_limit_bytes': DEFAULT_STORAGE_LIMIT,
+            }},
+        )
+        return Response({
+            'migrated': result.modified_count,
+            'message': f"Set quota fields on {result.modified_count} user(s).",
+        })
+    except Exception as e:
+        logger.error(f"mongo_quota_migrate error: {e}")
+        return Response({'error': 'Migration failed', 'detail': str(e)}, status=500)
 
 
 # --- Auth Views ---
@@ -831,15 +1052,248 @@ def mongo_stats(request):
         return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})
 
 
-# --- Playlist Endpoints ---
+# --- Payment Endpoints ---
 
-def _get_mongo_client():
-    return MongoClient(
-        settings.MONGODB_URI,
-        serverSelectionTimeoutMS=20000,
-        socketTimeoutMS=10000,
-        connectTimeoutMS=5000,
-    )
+# Inline pricing keeps setup simple — no Stripe dashboard Price IDs required.
+PLAN_PRICES = {
+    'personal': 2900,  # $29.00 in cents
+    'lifetime': 4900,  # $49.00 in cents
+}
+
+PLAN_DISPLAY_NAMES = {
+    'personal': 'DiZC Personal (100 GB)',
+    'lifetime': 'DiZC Lifetime (200 GB)',
+}
+
+
+def _resolve_jwt(request):
+    """
+    Extract and decode the Bearer JWT from the Authorization header.
+
+    Returns (mongo_user_id: str, None) on success or
+    (None, JsonResponse) when auth fails, so callers can do:
+        user_id, err = _resolve_jwt(request)
+        if err: return err
+    """
+    auth = request.META.get('HTTP_AUTHORIZATION', '')
+    if not auth.startswith('Bearer '):
+        return None, JsonResponse({'error': 'Authentication required'}, status=401)
+    try:
+        payload = pyjwt.decode(auth[7:], _JWT_SECRET, algorithms=['HS256'])
+        return payload['id'], None
+    except Exception:
+        return None, JsonResponse({'error': 'Invalid token'}, status=401)
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
+def create_checkout_session(request):
+    """
+    POST /api/mongo/payments/create-checkout/
+
+    Create a Stripe Checkout Session for a one-time plan upgrade.
+
+    Request body:
+        { "plan": "personal" | "lifetime" }
+
+    Response:
+        { "checkout_url": "https://checkout.stripe.com/..." }
+
+    Requires a valid JWT in the Authorization header.
+    """
+    mongo_user_id, err = _resolve_jwt(request)
+    if err:
+        return err
+
+    if not settings.STRIPE_SECRET_KEY:
+        return JsonResponse({'error': 'Payments not configured'}, status=503)
+
+    plan = (request.data.get('plan') or '').strip().lower()
+    if plan not in PLAN_PRICES:
+        return JsonResponse(
+            {'error': f"Invalid plan. Choose one of: {', '.join(PLAN_PRICES)}"},
+            status=400,
+        )
+
+    # Guard: don't charge users who already hold this plan or better
+    try:
+        quota = _get_user_quota(mongo_user_id)
+    except Exception as e:
+        logger.error(f"create_checkout_session quota check error for {mongo_user_id}: {e}")
+        return JsonResponse({'error': 'Could not verify current plan'}, status=500)
+
+    if quota and quota.get('plan') == plan:
+        return JsonResponse({'error': f"You are already on the {plan} plan"}, status=409)
+
+    stripe.api_key = settings.STRIPE_SECRET_KEY
+    frontend_url = settings.FRONTEND_URL.rstrip('/')
+
+    try:
+        session = stripe.checkout.Session.create(
+            mode='payment',
+            line_items=[{
+                'price_data': {
+                    'currency': 'usd',
+                    'product_data': {'name': PLAN_DISPLAY_NAMES[plan]},
+                    'unit_amount': PLAN_PRICES[plan],
+                },
+                'quantity': 1,
+            }],
+            metadata={
+                'mongo_user_id': mongo_user_id,
+                'plan': plan,
+            },
+            # After payment, land on /settings?upgrade=success (or cancelled)
+            success_url=f"{frontend_url}/settings?upgrade=success&plan={plan}",
+            cancel_url=f"{frontend_url}/settings?upgrade=cancelled",
+        )
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe session creation failed for {mongo_user_id}: {e}")
+        return JsonResponse({'error': 'Could not create checkout session'}, status=502)
+
+    logger.info(f"Stripe Checkout Session created: {session.id} for user {mongo_user_id} plan={plan}")
+    return JsonResponse({'checkout_url': session.url})
+
+
+@csrf_exempt
+def stripe_webhook(request):
+    """
+    POST /api/mongo/payments/webhook/
+
+    Stripe webhook handler — no JWT auth; signature verification via
+    STRIPE_WEBHOOK_SECRET replaces authentication here.
+
+    Handles: checkout.session.completed
+      - Upgrades the user's plan and storage_limit_bytes in MongoDB.
+    """
+    payload = request.body
+    sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', '')
+
+    if not settings.STRIPE_WEBHOOK_SECRET:
+        logger.warning("stripe_webhook called but STRIPE_WEBHOOK_SECRET is not set")
+        return JsonResponse({'error': 'Webhook secret not configured'}, status=503)
+
+    stripe.api_key = settings.STRIPE_SECRET_KEY
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError:
+        # Invalid JSON payload
+        return JsonResponse({'error': 'Invalid payload'}, status=400)
+    except stripe.error.SignatureVerificationError:
+        # Forged or tampered signature
+        logger.warning("stripe_webhook: signature verification failed")
+        return JsonResponse({'error': 'Invalid signature'}, status=400)
+
+    if event['type'] == 'checkout.session.completed':
+        _handle_checkout_completed(event['data']['object'])
+
+    # Always return 200 so Stripe doesn't retry for unhandled event types
+    return JsonResponse({'received': True})
+
+
+def _handle_checkout_completed(session):
+    """
+    Upgrade the user's MongoDB document after a successful Stripe payment.
+
+    Called synchronously from stripe_webhook — Stripe retries with exponential
+    back-off if we return a non-2xx status, so failures here are safe to surface
+    as errors at the webhook level.
+    """
+    mongo_user_id = session.get('metadata', {}).get('mongo_user_id')
+    plan = session.get('metadata', {}).get('plan')
+
+    if not mongo_user_id or not plan:
+        logger.error(
+            f"stripe checkout.session.completed missing metadata: session_id={session.get('id')}"
+        )
+        return
+
+    new_limit = PLAN_LIMITS.get(plan)
+    if not new_limit:
+        logger.error(f"stripe _handle_checkout_completed: unknown plan '{plan}'")
+        return
+
+    if not settings.MONGODB_URI:
+        logger.error("stripe _handle_checkout_completed: MongoDB not configured")
+        return
+
+    try:
+        db = _get_mongo_client().get_database()
+        result = db['users'].update_one(
+            {'_id': ObjectId(mongo_user_id)},
+            {
+                '$set': {
+                    'plan': plan,
+                    'storage_limit_bytes': new_limit,
+                    'upgraded_at': datetime.utcnow(),
+                }
+            },
+        )
+        if result.matched_count == 0:
+            logger.error(
+                f"stripe _handle_checkout_completed: user not found mongo_user_id={mongo_user_id}"
+            )
+            return
+        logger.info(
+            f"User {mongo_user_id} upgraded to plan='{plan}' "
+            f"storage_limit_bytes={new_limit} via Stripe session {session.get('id')}"
+        )
+    except Exception as e:
+        logger.error(
+            f"stripe _handle_checkout_completed DB error for {mongo_user_id}: {e}"
+        )
+
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
+def payment_status(request):
+    """
+    GET /api/mongo/payments/status/
+
+    Return the authenticated user's current plan and upgrade timestamp.
+
+    Response:
+        {
+            "plan": "free" | "personal" | "lifetime",
+            "upgraded_at": "<ISO-8601 string>" | null
+        }
+
+    Requires a valid JWT in the Authorization header.
+    """
+    mongo_user_id, err = _resolve_jwt(request)
+    if err:
+        return err
+
+    if not settings.MONGODB_URI:
+        return Response({'error': 'MongoDB not configured'}, status=500)
+
+    try:
+        db = _get_mongo_client().get_database()
+        user = db['users'].find_one(
+            {'_id': ObjectId(mongo_user_id)},
+            {'plan': 1, 'upgraded_at': 1},
+        )
+    except Exception as e:
+        logger.error(f"payment_status DB error for {mongo_user_id}: {e}")
+        return Response({'error': 'Could not retrieve payment status'}, status=500)
+
+    if not user:
+        return Response({'error': 'User not found'}, status=404)
+
+    upgraded_at = user.get('upgraded_at')
+    return Response({
+        'plan': user.get('plan', DEFAULT_PLAN),
+        'upgraded_at': upgraded_at.isoformat() if upgraded_at else None,
+    })
+
+
+# --- Playlist Endpoints ---
 
 
 def _serialize_playlist(p, full=False):

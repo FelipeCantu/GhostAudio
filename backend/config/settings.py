@@ -115,6 +115,13 @@ R2_SECRET_ACCESS_KEY = os.environ.get('R2_SECRET_ACCESS_KEY', '')
 R2_BUCKET_NAME = os.environ.get('R2_BUCKET_NAME', 'dizc-audio')
 R2_PUBLIC_URL = os.environ.get('R2_PUBLIC_URL', '')
 
+# Stripe Payments Configuration
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
+# FRONTEND_URL controls where Stripe redirects after checkout success/cancel.
+# In production set this to your deployed Next.js domain.
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
