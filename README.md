@@ -1,46 +1,71 @@
 <div align="center">
-  <img src="logo.png" alt="GhostAudio Logo" width="200" />
+  <img src="music-app/public/logo.png" alt="DiZC Logo" width="180" />
+  <br/><br/>
+  <img src="https://img.shields.io/badge/Version-0.2.0--beta-orange" alt="Version" />
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Web%20%7C%20Mobile-blue" alt="Platform" />
+  <img src="https://img.shields.io/badge/Status-Beta-yellow" alt="Status" />
+  <br/><br/>
+  <strong>Your music. Uncompromised.</strong>
   <br/>
-  <img src="https://img.shields.io/badge/Status-Beta-orange" alt="Beta Status" />
+  DiZC is a high-fidelity digital music library for audiophiles who own their collection.
+  Bit-perfect playback, one-click CD ripping, cloud sync, and a stunning interface — across desktop, web, and mobile.
 </div>
-
-# GhostAudio - High Fidelity Digital Music Library
-
-**GhostAudio** is a standalone, high-fidelity music experience designed for audiophiles who want to own their music. It bridges the gap between physical media (CDs) and the modern digital cloud — rip a disc on your desktop and stream it from any browser minutes later.
 
 ---
 
-## Key Features
+## Download
+
+| Platform | Link |
+|---|---|
+| Windows Desktop | [DiZC-Setup-0.2.0-beta.exe](https://github.com/FelipeCantu/GhostAudio/releases/download/v0.2.0-beta/DiZC-Setup-0.2.0-beta.exe) |
+| Web Player | [dizc.vercel.app](https://dizc.vercel.app) |
+| Mobile (PWA) | Visit the web player on your phone → Add to Home Screen |
+
+> **Note:** Windows may show a SmartScreen warning on first launch. Click **More info → Run anyway**. The app is not yet code-signed.
+
+---
+
+## Features
 
 ### CD Ripping
-Insert a disc, fetch metadata automatically from MusicBrainz, and rip tracks in lossless quality. The Python/Django backend handles optical drive communication via ffmpeg (`libcdio`) and streams real-time per-track progress back to the UI over SSE. The desktop app polls for backend readiness on startup so you always get a clean "Connecting..." state instead of a silent error while the audio engine initialises.
+Insert a disc, click Rip. DiZC fetches metadata automatically from MusicBrainz (title, artist, track names, cover art), then rips sector-by-sector using ffmpeg's `libcdio` driver. Per-track progress streams live to the UI. The whole process takes 3–8 minutes per disc.
 
 ### Local File Import
-Import existing MP3, FLAC, WAV, and M4A files from your machine into your library with full metadata and cover art support.
+Drag and drop or select MP3, FLAC, WAV, AAC, AIFF, and ALAC files. Metadata and cover art are read automatically. Files upload to your Cloudflare R2 bucket so they're available on every device.
 
-### Cloud Audio Streaming (Cloudflare R2)
-Ripped and imported tracks automatically upload to Cloudflare R2 object storage. Once uploaded, your tracks are available to stream from the web app on any device — no local files required. R2 is optional; the app gracefully falls back to local file paths when credentials are not configured.
+### Cloud Audio Streaming
+All tracks — ripped or imported — upload to Cloudflare R2 object storage and stream to any device via the web player. No local files needed on the streaming device. R2 is optional; the app falls back gracefully to local paths if not configured.
 
-### Unified Account (Desktop + Web)
-One account works everywhere. Auth is backed by MongoDB so your desktop and web sessions share the same user ID, library, and playlists.
+### Web Player + Mobile PWA
+The full DiZC experience runs in any browser. On mobile, install it as a PWA (Add to Home Screen) and it opens fullscreen like a native app — no App Store required.
 
-### Persistent Import Progress
-A floating import indicator sits in the top-right corner of every page while a rip is in progress. Because the packaged desktop app uses static export (full-page reloads on navigation), import state is persisted to `localStorage` so the indicator and progress survive navigating away mid-import. Cancel also works correctly after navigation because the rip session ID is restored from storage.
-
-### Library & Album Browsing
-Browse your collection by album with cover art fetched from the Cover Art Archive. Delete albums you no longer want.
-
-### Playlists
-- Create **manual playlists** and add any track from your library
-- Create **smart playlists** that auto-populate by rule:
-  - `by_artist` — all tracks by a given artist
-  - `recently_added` — tracks from your 10 most recently imported albums
-  - `random` — up to 50 randomly shuffled tracks
-- Drag-and-drop to reorder tracks
-- Refresh smart playlists anytime to pick up new imports
+### Customizable Dashboard
+Drag sections of your home screen into any order you want, just like Apple Music. Your layout is saved and persists across sessions.
 
 ### Full-Featured Player
-Queue, skip, seek, volume, and persistent queue that survives navigation within a session. Play an album, a playlist, or start from any individual track.
+- Play/pause, skip, seek
+- Shuffle and repeat (off / all / one)
+- Sleep timer (15 / 30 / 45 / 60 min)
+- Queue viewer
+- Full-screen expanded player on mobile with rotating album art
+- Mini player with live progress indicator
+
+### Playlists
+- **Manual playlists** — add any track, drag to reorder
+- **Smart playlists** — auto-populate by rule:
+  - `by_artist` — all tracks by a given artist
+  - `recently_added` — tracks from your 10 most recent imports
+  - `random` — up to 50 shuffled tracks
+- Refresh smart playlists anytime to pick up new imports
+
+### Library Browsing
+Grid and list views, search, and sort by recently added, A–Z, Z–A, or by artist. Artist view groups albums under each artist with horizontal scroll rows.
+
+### Global Search
+Keyboard shortcut (`Ctrl+K` / `Cmd+K`) opens a full search overlay across your entire library from any page.
+
+### Unified Account
+One account works on desktop and web. Auth is backed by MongoDB — same user ID, library, and playlists everywhere.
 
 ---
 
@@ -48,17 +73,19 @@ Queue, skip, seek, volume, and persistent queue that survives navigation within 
 
 | Layer | Technology |
 |---|---|
-| Desktop shell | Electron |
-| Frontend | Next.js 15 (App Router), React, TypeScript, Tailwind CSS |
+| Desktop shell | Electron 40 |
+| Frontend | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4 |
+| Animations | Framer Motion |
+| Drag & drop | @dnd-kit/core + @dnd-kit/sortable |
 | Backend | Django 5, Django REST Framework |
-| WSGI server | Waitress (desktop exe) · Gunicorn (Railway) |
-| Desktop bundling | PyInstaller (`ghost_backend.spec`) |
-| Database | MongoDB Atlas (PyMongo) |
-| Auth | Custom JWT (pyjwt + bcrypt), shared between desktop and web |
+| WSGI server | Waitress (desktop) · Gunicorn (Railway) |
+| Desktop bundling | PyInstaller + Electron Builder |
+| Database | MongoDB Atlas |
+| Auth | Custom JWT (pyjwt + bcrypt), shared desktop ↔ web |
 | Audio storage | Cloudflare R2 (S3-compatible, via boto3) |
 | CD ripping | ffmpeg (`libcdio` input driver) |
-| Metadata | MusicBrainz / Cover Art Archive |
-| Deployment | Vercel (web frontend), Railway (backend API) |
+| Metadata | MusicBrainz API + Cover Art Archive |
+| Deployment | Vercel (frontend) · Railway (backend API) |
 
 ---
 
@@ -66,43 +93,52 @@ Queue, skip, seek, volume, and persistent queue that survives navigation within 
 
 ```
 GhostRepo/
-├── backend/                  # Django REST API
-│   ├── config/               # Settings, URLs, WSGI
-│   ├── importer/             # Views, CD ripping, R2 upload, playlists
-│   │   ├── views.py          # All API endpoints + SSE streaming
-│   │   ├── services.py       # CDRipper class (ffmpeg wrapper)
-│   │   └── cd_metadata.py    # MusicBrainz TOC lookup
-│   ├── bin/                  # Bundled ffmpeg.exe
-│   ├── ghost_backend.spec    # PyInstaller spec (bundles exe for desktop)
+├── backend/                    # Django REST API
+│   ├── config/                 # Settings, URLs, WSGI
+│   ├── importer/               # All API logic
+│   │   ├── views.py            # Endpoints + SSE streaming
+│   │   ├── services.py         # CDRipper (ffmpeg wrapper)
+│   │   └── cd_metadata.py      # MusicBrainz TOC lookup
+│   ├── bin/                    # Bundled ffmpeg.exe
+│   ├── ghost_backend.spec      # PyInstaller spec
 │   ├── requirements.txt
-│   ├── Procfile              # Railway deployment
-│   └── runtime.txt           # python-3.12
-└── music-app/                # Next.js + Electron app
+│   ├── Procfile                # Railway → Gunicorn
+│   └── runtime.txt             # python-3.12
+└── music-app/                  # Next.js + Electron
     ├── electron/
-    │   ├── main.js           # Electron main process + IPC handlers
-    │   ├── preload.js        # Secure context bridge
-    │   └── services.js       # Fetch/SSE wrappers for the Django API
+    │   ├── main.js             # Main process + IPC handlers
+    │   ├── preload.js          # Context bridge
+    │   └── services.js         # API wrappers (fetch + SSE)
+    ├── public/
+    │   ├── manifest.json       # PWA manifest
+    │   └── sw.js               # Service worker
     └── src/
         ├── app/
-        │   ├── dashboard/    # Main library view
-        │   └── playlists/    # Playlist detail pages
+        │   ├── app/            # Dashboard (home)
+        │   ├── library/        # Album grid
+        │   ├── import/         # File + CD import
+        │   ├── playlists/      # Playlist views
+        │   ├── settings/
+        │   ├── login/
+        │   └── register/
         ├── components/
+        │   ├── PlayerBar.tsx         # Persistent player + expanded mobile view
+        │   ├── DashboardLayout.tsx   # Shell: sidebar, mobile nav, search
+        │   ├── Sidebar.tsx
         │   ├── CDImporter.tsx        # CD rip UI with per-track progress
-        │   ├── ImportIndicator.tsx   # Floating import progress pill (all pages)
         │   ├── AlbumCard.tsx
         │   ├── AlbumDetailView.tsx
-        │   ├── Sidebar.tsx
-        │   ├── PlayerBar.tsx
         │   ├── PlaylistView.tsx
-        │   ├── PlaylistCoverArt.tsx
-        │   └── CreatePlaylistModal.tsx
+        │   ├── GlobalSearch.tsx      # Cmd+K search overlay
+        │   ├── KeyboardShortcutsModal.tsx
+        │   └── PWARegister.tsx
         ├── context/
         │   ├── AuthContext.tsx
-        │   ├── ImportContext.tsx     # Global import state (localStorage-persisted)
         │   ├── PlayerContext.tsx
+        │   ├── ImportContext.tsx     # Import state (localStorage-persisted)
         │   └── PlaylistContext.tsx
         └── services/
-            └── api.ts        # IPC → fetch fallback for all API calls
+            └── api.ts               # IPC → fetch fallback for all API calls
 ```
 
 ---
@@ -121,34 +157,35 @@ All endpoints prefixed with `/api/`.
 ### Library
 | Method | Path | Description |
 |---|---|---|
-| GET | `mongo/library/` | List albums for a user |
-| DELETE | `mongo/library/<id>/` | Delete an album |
+| GET | `mongo/library/` | List albums |
+| DELETE | `mongo/library/<id>/` | Delete album |
+| GET | `mongo/dashboard-stats/` | Album + track counts + recent albums |
+
+### Import
+| Method | Path | Description |
+|---|---|---|
+| POST | `mongo/upload-audio/` | Upload file to R2, returns public URL |
 
 ### CD Ripping
 | Method | Path | Description |
 |---|---|---|
 | POST | `metadata/` | Fetch disc metadata from MusicBrainz |
-| POST | `rip/stream/` | SSE stream — rip CD with live progress |
-| POST | `rip/cancel/` | Cancel an active rip session |
-
-### System
-| Method | Path | Description |
-|---|---|---|
-| GET | `system/check/` | Health check — confirms backend and ffmpeg are ready |
+| POST | `rip/stream/` | SSE stream — rip with live per-track progress |
+| POST | `rip/cancel/` | Cancel active rip session |
 
 ### Playlists
 | Method | Path | Description |
 |---|---|---|
 | GET/POST | `mongo/playlists/` | List / create |
 | GET/PATCH/DELETE | `mongo/playlists/<id>/` | Detail / update / delete |
-| POST | `mongo/playlists/<id>/items/` | Append tracks |
-| DELETE | `mongo/playlists/<id>/items/<index>/` | Remove a track |
+| POST | `mongo/playlists/<id>/items/` | Add tracks |
+| DELETE | `mongo/playlists/<id>/items/<index>/` | Remove track |
 | POST | `mongo/playlists/<id>/refresh/` | Re-run smart rule |
 
-### Audio Upload
+### System
 | Method | Path | Description |
 |---|---|---|
-| POST | `mongo/upload-audio/` | Upload file to Cloudflare R2, returns public URL |
+| GET | `system/check/` | Health check (backend + ffmpeg status) |
 
 ---
 
@@ -158,21 +195,20 @@ All endpoints prefixed with `/api/`.
 - Python 3.12
 - Node.js 20+
 - MongoDB Atlas cluster
-- Cloudflare R2 bucket *(optional — local file paths are used as fallback)*
+- Cloudflare R2 bucket *(optional — falls back to local paths)*
 
-### Backend
+### 1. Backend
 
 ```bash
 cd backend
 python -m venv venv
 venv/Scripts/pip install -r requirements.txt
-venv/Scripts/python manage.py migrate
 venv/Scripts/python manage.py runserver
 ```
 
-API available at `http://127.0.0.1:8000`.
+API runs at `http://127.0.0.1:8000`.
 
-### Frontend (browser dev mode)
+### 2. Frontend (web)
 
 ```bash
 cd music-app
@@ -182,13 +218,20 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-### Electron (desktop)
+### 3. Desktop (Electron)
 
 Start the Django backend first, then:
 
 ```bash
 cd music-app
 npx electron .
+```
+
+Or run both together:
+
+```bash
+cd music-app
+npm run electron-dev
 ```
 
 ### Environment Variables
@@ -202,55 +245,59 @@ MONGODB_URI=mongodb+srv://<user>:<pass>@<cluster>.mongodb.net/<db>
 # Auth
 JWT_SECRET=<random-secret>
 
-# Cloudflare R2 (leave blank to use local paths only)
-R2_ACCOUNT_ID=
+# Cloudflare R2 (optional)
+R2_ACCOUNT_ID=<cloudflare-account-id>
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=dizc-audio
 R2_PUBLIC_URL=https://pub-<hash>.r2.dev
 
-# API (use Railway URL for production)
+# Backend (use Railway URL in production)
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 ```
+
+> `R2_ACCOUNT_ID` must be your Cloudflare **Account ID** (found bottom-right on dash.cloudflare.com) — not the access key ID.
 
 ---
 
 ## Deployment
 
 ### Backend → Railway
+1. Connect the repo to Railway, set root to `backend/`
+2. Add env vars: `MONGODB_URI`, `JWT_SECRET`, `R2_*`
+3. Railway picks up `Procfile` and runs Gunicorn automatically
 
-1. Connect the repo to Railway, set the root to `backend/`.
-2. Add environment variables: `MONGODB_URI`, `JWT_SECRET`, `R2_*` keys.
-3. Railway picks up `Procfile` automatically and runs Gunicorn.
-
-### Web → Vercel
-
-1. Connect `music-app/` to a Vercel project.
-2. Set `NEXT_PUBLIC_API_URL` to your Railway backend URL.
-3. Push to deploy.
+### Frontend → Vercel
+1. Connect `music-app/` to a Vercel project
+2. Set `NEXT_PUBLIC_API_URL` to your Railway URL
+3. Push to deploy — PWA support is included automatically
 
 ### Desktop Installer
 
-The packaged desktop app bundles the Django backend into a single `ghost_backend.exe` using PyInstaller, then wraps everything with Electron Builder.
-
 **Step 1 — Build the backend exe**
-
 ```bash
 cd backend
 venv/Scripts/python -m PyInstaller ghost_backend.spec --clean
 ```
+Outputs `backend/dist/ghost_backend.exe`.
 
-This outputs `backend/dist/ghost_backend.exe`. The spec uses `collect_all` for boto3, botocore, and s3transfer to ensure Cloudflare R2 uploads work correctly in the bundled exe.
-
-**Step 2 — Build and package the Electron app**
-
+**Step 2 — Build and package**
 ```bash
 cd music-app
 npm run dist
 ```
-
-`ELECTRON_BUILD=true` (set by the `dist` script) enables Next.js static export mode required for Electron's file-based page serving. The final installer is output to `music-app/dist/`.
+Outputs `music-app/dist/DiZC Setup 0.2.0-beta.exe`. Upload to a GitHub Release for distribution.
 
 ---
 
-*Created by Felipe Cantu*
+## Known Limitations (Beta)
+
+- **Windows only** — macOS and Linux desktop builds are not yet available
+- **No code signing** — SmartScreen warning appears on first launch
+- **CD ripping** — requires the desktop app (not available in web/PWA)
+- **Local file import** — upload to R2 happens via the desktop app; web import is planned
+- **Offline PWA** — app shell caches for offline load, but audio requires network
+
+---
+
+*Created by Felipe Cantu · DiZC v0.2.0-beta*
