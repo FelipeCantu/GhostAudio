@@ -212,7 +212,7 @@ export default function LandingPage() {
                 ))}
                 <div className="pt-3 flex flex-col gap-3">
                   <a
-                    href="/downloads/DiZC-Setup.exe"
+                    href="https://github.com/FelipeCantu/GhostAudio/releases/download/v0.2.0-beta/DiZC-Setup-0.2.0-beta.exe"
                     download
                     className="py-3 px-4 bg-white text-[#0d3b66] font-bold rounded-xl flex items-center justify-center gap-2 text-sm"
                     onClick={() => setMobileMenuOpen(false)}
@@ -276,7 +276,7 @@ export default function LandingPage() {
               className="flex flex-col sm:flex-row gap-3 justify-center items-center mb-16 scroll-mt-24"
             >
               <a
-                href="/downloads/DiZC-Setup.exe"
+                href="https://github.com/FelipeCantu/GhostAudio/releases/download/v0.2.0-beta/DiZC-Setup-0.2.0-beta.exe"
                 download
                 className="w-full sm:w-auto px-7 py-4 bg-white text-[#0d3b66] font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-zinc-100 transition-transform hover:scale-105 shadow-xl shadow-white/10 min-h-[52px]"
               >
@@ -466,7 +466,7 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <a
-                href="/downloads/DiZC-Setup.exe"
+                href="https://github.com/FelipeCantu/GhostAudio/releases/download/v0.2.0-beta/DiZC-Setup-0.2.0-beta.exe"
                 download
                 className="px-8 py-4 bg-[#f4d35e] text-[#0d3b66] font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-[#ffd700] transition-all hover:scale-105 shadow-lg shadow-[#f4d35e]/20 min-h-[52px]"
               >
