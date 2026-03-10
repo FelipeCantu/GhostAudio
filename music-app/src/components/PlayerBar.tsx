@@ -453,6 +453,14 @@ export default function PlayerBar() {
             />
           </div>
 
+          {/* Mobile progress line — 2px bar at top of mini player */}
+          <div className="md:hidden h-[2px] bg-white/10">
+            <div
+              className="h-full bg-gradient-to-r from-[#f4d35e] to-[#ee964b]"
+              style={{ width: `${progressPercent}%`, transition: "width 0.15s linear" }}
+            />
+          </div>
+
           <div className="h-16 md:h-20 px-3 md:px-6 flex items-center justify-between gap-2">
             {/* ── Left: Track info ── */}
             <button

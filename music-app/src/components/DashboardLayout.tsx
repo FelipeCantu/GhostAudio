@@ -11,6 +11,7 @@ import { Menu, Home, Library, Disc, ListMusic } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { api, Album } from "@/services/api";
+import { usePlayer } from "@/context/PlayerContext";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -25,6 +26,7 @@ const mobileNavLinks = [
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const { isAuthenticated, isLoading, token, user } = useAuth();
+  const { currentTrack } = usePlayer();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [searchAlbums, setSearchAlbums] = useState<Album[]>([]);
@@ -124,7 +126,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         {/* Page Content */}
         <main
           className="flex-1 p-4 md:p-8 relative z-10 overflow-y-auto"
-          style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom, 0px))" }}
+          style={{
+            paddingBottom: currentTrack
+              ? "calc(9rem + env(safe-area-inset-bottom, 0px))"
+              : "calc(5rem + env(safe-area-inset-bottom, 0px))",
+          }}
         >
           <div className="max-w-7xl mx-auto">
             {children}
