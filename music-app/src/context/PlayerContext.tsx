@@ -175,7 +175,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (audioRef.current) {
             let src = audioFile;
             const isLocalPath = src && !src.startsWith("http") && !src.startsWith("localfile://") && !src.startsWith("file://");
-            const isElectron = typeof window !== "undefined" && (window as Record<string, unknown>).electronAPI !== undefined;
+            const isElectron = typeof window !== "undefined" && (window as unknown as Record<string, unknown>).electronAPI !== undefined;
             if (isLocalPath) {
                 if (!isElectron) {
                     setError("This track is stored locally and can only be played in the Desktop App.");
