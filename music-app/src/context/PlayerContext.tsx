@@ -149,7 +149,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         resolvedQueue: Track[],
         skipAddToRecent = false,
     ) => {
-        const audioFile = (track as Record<string, unknown>).audioFile as string | undefined ?? track.audio_file;
+        const audioFile = (track as unknown as Record<string, unknown>).audioFile as string | undefined ?? track.audio_file;
 
         if (!audioFile) {
             console.error("[Player] ERROR: No audio file on track!", track);
