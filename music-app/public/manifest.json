@@ -2,7 +2,7 @@
   "name": "DiZC",
   "short_name": "DiZC",
   "description": "High fidelity digital music library. Your music, uncompromised.",
-  "start_url": "/",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#000000",
