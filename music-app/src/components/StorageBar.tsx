@@ -63,7 +63,7 @@ function StorageBarFull({ data }: { data: QuotaData }) {
 
         {isFree && (
           <Link
-            href="/upgrade"
+            href="/pricing"
             className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f4d35e]/10 hover:bg-[#f4d35e]/20 border border-[#f4d35e]/20 text-[#f4d35e] rounded-xl text-xs font-semibold transition-colors min-h-[32px]"
           >
             <Zap size={12} />

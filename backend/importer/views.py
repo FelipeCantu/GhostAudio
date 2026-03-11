@@ -1145,9 +1145,9 @@ def create_checkout_session(request):
                 'mongo_user_id': mongo_user_id,
                 'plan': plan,
             },
-            # After payment, land on /settings?upgrade=success (or cancelled)
-            success_url=f"{frontend_url}/settings?upgrade=success&plan={plan}",
-            cancel_url=f"{frontend_url}/settings?upgrade=cancelled",
+            # After payment, land on /pricing?success=true (or cancelled=true)
+            success_url=f"{frontend_url}/pricing?success=true&plan={plan}",
+            cancel_url=f"{frontend_url}/pricing?cancelled=true",
         )
     except stripe.error.StripeError as e:
         logger.error(f"Stripe session creation failed for {mongo_user_id}: {e}")

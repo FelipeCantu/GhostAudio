@@ -218,13 +218,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         // Shuffle — pick random track that isn't the current one
         if (shuffleModeRef.current && q.length > 1) {
-            const others = q.filter(t => t.id !== track.id);
+            const others = q.filter(t => t.audio_file !== track.audio_file);
             const next = others[Math.floor(Math.random() * others.length)];
             playTrackInternal(next, album, q);
             return;
         }
 
-        const currentIndex = q.findIndex(t => t.id === track.id);
+        const currentIndex = q.findIndex(t => t.audio_file === track.audio_file);
 
         if (currentIndex < q.length - 1) {
             playTrackInternal(q[currentIndex + 1], album, q);
@@ -294,11 +294,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             console.error("[Player] Failed src:", audioEl.src);
             setError(msg);
             setIsLoading(false);
+            setIsPlaying(false);
         };
         const handleWaiting = () => setIsLoading(true);
         const handlePlaying = () => {
             setIsLoading(false);
             setError(null);
+            setIsPlaying(true);
+        };
+        // Sync isPlaying if the browser/OS pauses audio externally
+        // (e.g. another tab steals audio focus, headphones disconnect, mobile lock screen)
+        const handlePause = () => {
+            setIsPlaying(false);
         };
 
         audio.addEventListener("timeupdate", handleTimeUpdate);
@@ -309,6 +316,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         audio.addEventListener("error", handleError);
         audio.addEventListener("waiting", handleWaiting);
         audio.addEventListener("playing", handlePlaying);
+        audio.addEventListener("pause", handlePause);
 
         return () => {
             audio.pause();
@@ -320,6 +328,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             audio.removeEventListener("error", handleError);
             audio.removeEventListener("waiting", handleWaiting);
             audio.removeEventListener("playing", handlePlaying);
+            audio.removeEventListener("pause", handlePause);
         };
         // nextTrackFromRefs and incrementPlayCount/addToRecentlyPlayed are stable useCallback refs
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -364,10 +373,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (!currentTrackRef.current) return;
         if (isPlaying) {
             audioRef.current?.pause();
+            // handlePause listener will set isPlaying(false)
         } else {
             audioRef.current?.play().catch(e => console.error("Playback failed:", e));
+            // handlePlaying listener will set isPlaying(true)
         }
-        setIsPlaying(prev => !prev);
     };
 
     const nextTrack = () => {
@@ -391,13 +401,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         // Shuffle — pick random track
         if (shuffleModeRef.current && q.length > 1) {
-            const others = q.filter(t => t.id !== track.id);
+            const others = q.filter(t => t.audio_file !== track.audio_file);
             const prev = others[Math.floor(Math.random() * others.length)];
             playTrackInternal(prev, album, q);
             return;
         }
 
-        const currentIndex = q.findIndex(t => t.id === track.id);
+        const currentIndex = q.findIndex(t => t.audio_file === track.audio_file);
         if (currentIndex > 0) {
             playTrackInternal(q[currentIndex - 1], album, q);
         } else if (repeatModeRef.current === "all") {

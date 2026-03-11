@@ -166,6 +166,9 @@ export default function LandingPage() {
             <Link href="#faq" className="text-sm text-zinc-400 hover:text-white transition-colors">
               FAQ
             </Link>
+            <Link href="/pricing" className="text-sm text-zinc-400 hover:text-white transition-colors">
+              Pricing
+            </Link>
             <Link
               href="/app"
               className="px-5 py-2 bg-[#f4d35e] text-[#0d3b66] font-bold rounded-lg hover:bg-[#ffd700] transition-all text-sm"
@@ -181,58 +184,124 @@ export default function LandingPage() {
             aria-label="Toggle menu"
             aria-expanded={mobileMenuOpen}
           >
-            {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+            <AnimatePresence mode="wait" initial={false}>
+              {mobileMenuOpen ? (
+                <motion.span
+                  key="close"
+                  initial={{ opacity: 0, rotate: -90 }}
+                  animate={{ opacity: 1, rotate: 0 }}
+                  exit={{ opacity: 0, rotate: 90 }}
+                  transition={{ duration: 0.18 }}
+                  className="flex"
+                >
+                  <X size={22} />
+                </motion.span>
+              ) : (
+                <motion.span
+                  key="open"
+                  initial={{ opacity: 0, rotate: 90 }}
+                  animate={{ opacity: 1, rotate: 0 }}
+                  exit={{ opacity: 0, rotate: -90 }}
+                  transition={{ duration: 0.18 }}
+                  className="flex"
+                >
+                  <Menu size={22} />
+                </motion.span>
+              )}
+            </AnimatePresence>
           </button>
         </div>
+      </nav>
 
-        {/* Mobile Menu Dropdown */}
-        <AnimatePresence>
-          {mobileMenuOpen && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="md:hidden overflow-hidden border-t border-white/5 bg-[#0d1b2a]/98 backdrop-blur-xl"
-            >
-              <div className="flex flex-col px-5 py-4 gap-1">
-                {[
-                  { label: "Why DiZC", href: "#why" },
-                  { label: "Features", href: "#features" },
-                  { label: "FAQ", href: "#faq" },
-                ].map((link) => (
+      {/* ── Mobile Full-Screen Menu Overlay ── */}
+      <AnimatePresence>
+        {mobileMenuOpen && (
+          <motion.div
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", damping: 28, stiffness: 260 }}
+            className="fixed inset-0 z-[60] md:hidden bg-[#0d1b2a]/97 backdrop-blur-2xl flex flex-col"
+          >
+            {/* Ambient decorative disc */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
+              <Disc
+                size={480}
+                className="opacity-[0.03] animate-[spin_30s_linear_infinite] text-white"
+              />
+            </div>
+
+            {/* Header row */}
+            <div className="relative z-10 flex items-center justify-between px-5 h-16 border-b border-white/5 flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <Disc className="text-[#f4d35e] w-7 h-7 animate-[spin_10s_linear_infinite]" />
+                <span className="text-xl font-bold tracking-tighter text-white">DiZC</span>
+              </div>
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className="p-2 text-zinc-300 hover:text-white rounded-lg hover:bg-white/5 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+                aria-label="Close menu"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            {/* Nav links — centered vertically */}
+            <div className="relative z-10 flex-1 flex flex-col items-start justify-center px-8 gap-1">
+              {[
+                { label: "Why DiZC", href: "#why" },
+                { label: "Features", href: "#features" },
+                { label: "FAQ", href: "#faq" },
+                { label: "Pricing", href: "/pricing" },
+              ].map((link, i) => (
+                <motion.div
+                  key={link.href}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.06, duration: 0.35 }}
+                  className="w-full"
+                >
                   <Link
-                    key={link.href}
                     href={link.href}
                     onClick={() => setMobileMenuOpen(false)}
-                    className="py-3 px-2 text-zinc-300 hover:text-white font-medium border-b border-white/5 last:border-0 transition-colors"
+                    className="group flex items-center min-h-[64px] text-4xl font-bold text-white hover:text-[#f4d35e] transition-colors duration-150 relative"
                   >
-                    {link.label}
+                    <span className="relative">
+                      {link.label}
+                      <span className="absolute -bottom-1 left-0 h-[2px] w-0 bg-[#f4d35e] rounded-full transition-all duration-200 group-hover:w-full" />
+                    </span>
                   </Link>
-                ))}
-                <div className="pt-3 flex flex-col gap-3">
-                  <a
-                    href="https://github.com/FelipeCantu/GhostAudio/releases/download/v0.2.0-beta/DiZC.Setup.0.2.0-beta.exe"
-                    className="py-3 px-4 bg-white text-[#0d3b66] font-bold rounded-xl flex items-center justify-center gap-2 text-sm"
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    <Download size={18} />
-                    Download for Windows
-                  </a>
-                  <Link
-                    href="/app"
-                    className="py-3 px-4 bg-[#f4d35e] text-[#0d3b66] font-bold rounded-xl flex items-center justify-center gap-2 text-sm"
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    <Globe size={18} />
-                    Launch Web App
-                  </Link>
-                </div>
-              </div>
+                </motion.div>
+              ))}
+            </div>
+
+            {/* Action buttons at the bottom */}
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.35 }}
+              className="relative z-10 px-5 pb-10 flex flex-col gap-3 flex-shrink-0"
+            >
+              <a
+                href="https://github.com/FelipeCantu/GhostAudio/releases/download/v0.2.0-beta/DiZC.Setup.0.2.0-beta.exe"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full py-4 bg-white text-[#0d3b66] font-bold rounded-2xl flex items-center justify-center gap-2.5 text-base hover:bg-zinc-100 transition-colors"
+              >
+                <Download size={20} />
+                Download for Windows
+              </a>
+              <Link
+                href="/app"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full py-4 bg-[#f4d35e] text-[#0d3b66] font-bold rounded-2xl flex items-center justify-center gap-2.5 text-base hover:bg-[#ffd700] transition-colors"
+              >
+                <Globe size={20} />
+                Launch Web App
+              </Link>
             </motion.div>
-          )}
-        </AnimatePresence>
-      </nav>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Hero ── */}
       <section className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden pt-16">

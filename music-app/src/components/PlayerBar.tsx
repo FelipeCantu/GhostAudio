@@ -371,7 +371,7 @@ export default function PlayerBar() {
                 </p>
               ) : (
                 queue.map((track, idx) => {
-                  const isCurrent = track.id === currentTrack.id;
+                  const isCurrent = track.audio_file === currentTrack.audio_file;
                   return (
                     <button
                       key={`queue-${track.id}-${idx}`}
