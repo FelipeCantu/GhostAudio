@@ -200,7 +200,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
             {/* Header Section */}
             <div className="flex flex-col md:flex-row gap-8 mb-10">
                 {/* Cover Art */}
-                <div className="relative z-10 w-64 h-64 md:w-80 md:h-80 flex-shrink-0 rounded-2xl overflow-hidden bg-black/40 shadow-2xl mx-auto md:mx-0 border border-white/10 group">
+                <div className="relative z-10 w-48 h-48 sm:w-64 sm:h-64 md:w-72 md:h-72 lg:w-80 lg:h-80 flex-shrink-0 rounded-2xl overflow-hidden bg-black/40 shadow-2xl mx-auto md:mx-0 border border-white/10 group">
                     {coverArt && !imgError ? (
                         <Image
                             src={coverArt}
@@ -220,20 +220,20 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                 {/* Album Info */}
                 <div className="flex flex-col justify-end text-center md:text-left flex-1 min-w-0">
                     <p className="text-sm font-bold uppercase tracking-widest text-primary mb-2">Album</p>
-                    <h1 className="text-4xl md:text-6xl font-black text-white mb-2 tracking-tight leading-tight">{localAlbum.title}</h1>
-                    <div className="flex items-center gap-3 justify-center md:justify-start text-xl text-zinc-300 mb-6">
+                    <h1 className="text-3xl md:text-5xl lg:text-6xl font-black text-white mb-2 tracking-tight leading-tight">{localAlbum.title}</h1>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 justify-center md:justify-start text-base text-zinc-300 mb-6">
                         <span className="font-medium text-white">{localAlbum.artist}</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 hidden sm:block" />
                         <span className="text-zinc-400">{new Date((album as any).createdAt || album.created_at).getFullYear() || new Date().getFullYear()}</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 hidden sm:block" />
                         <span className="text-zinc-400">{tracks.length} tracks</span>
                     </div>
 
-                    <div className="flex items-center gap-3 justify-center md:justify-start flex-wrap">
+                    <div className="flex items-center gap-2 sm:gap-3 justify-center md:justify-start flex-wrap">
                         {/* Play Album - Primary CTA */}
                         <button
                             onClick={handlePlayAll}
-                            className="flex items-center gap-2.5 px-7 py-3.5 bg-[#f4d35e] text-[#0d1b2a] font-bold rounded-full hover:bg-[#f4d35e]/90 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-[#f4d35e]/20 text-sm tracking-wide"
+                            className="flex items-center gap-2 px-5 sm:px-7 py-2.5 sm:py-3.5 bg-[#f4d35e] text-[#0d1b2a] font-bold rounded-full hover:bg-[#f4d35e]/90 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-[#f4d35e]/20 text-sm tracking-wide min-h-[44px]"
                         >
                             <Play size={18} fill="currentColor" />
                             Play Album
@@ -244,42 +244,42 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                             <button
                                 onClick={handleFetchCoverArt}
                                 disabled={isFetchingCover}
-                                className="flex items-center gap-2 px-5 py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
                                 title="Fetch cover art from MusicBrainz"
                             >
                                 {isFetchingCover ? (
                                     <>
                                         <div className="w-4 h-4 border-2 border-zinc-400 border-t-transparent rounded-full animate-spin" />
-                                        Fetching...
+                                        <span className="hidden sm:inline">Fetching...</span>
                                     </>
                                 ) : (
                                     <>
                                         <ImagePlus size={16} />
-                                        Fetch Cover Art
+                                        <span className="hidden sm:inline">Fetch Cover Art</span>
                                     </>
                                 )}
                             </button>
                         )}
 
                         {/* Shuffle */}
-                        <button className="flex items-center gap-2 px-5 py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium">
+                        <button className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium min-h-[44px]">
                             <Shuffle size={16} />
-                            Shuffle
+                            <span className="hidden sm:inline">Shuffle</span>
                         </button>
 
                         {/* Add to Playlist */}
                         <div className="relative" ref={menuRef}>
                             <button
                                 onClick={() => setShowPlaylistMenu(v => !v)}
-                                className="flex items-center gap-2 px-5 py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium"
+                                className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium min-h-[44px]"
                                 title="Add album to playlist"
                             >
                                 <ListPlus size={16} />
-                                Add to Playlist
+                                <span className="hidden sm:inline">Add to Playlist</span>
                             </button>
                             {showPlaylistMenu && (
-                                <div className="absolute top-full left-0 mt-2 w-56 bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden">
-                                    <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-zinc-500 border-b border-white/5">Add to playlist</div>
+                                <div className="absolute top-full left-0 mt-2 w-56 max-h-60 overflow-y-auto bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50">
+                                    <div className="sticky top-0 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-zinc-500 border-b border-white/5 bg-zinc-900/95 backdrop-blur-sm">Add to playlist</div>
                                     {playlists.filter(p => !p.is_smart).length === 0 ? (
                                         <p className="px-4 py-3 text-sm text-zinc-500">No manual playlists.</p>
                                     ) : (
@@ -287,10 +287,10 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                                             <button
                                                 key={pl.id}
                                                 onClick={() => handleAddToPlaylist(pl.id, pl.name)}
-                                                className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2.5"
+                                                className="w-full text-left px-4 py-3 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2.5 min-h-[44px]"
                                             >
-                                                <ListPlus size={14} className="text-zinc-500" />
-                                                {pl.name}
+                                                <ListPlus size={14} className="text-zinc-500 flex-shrink-0" />
+                                                <span className="truncate">{pl.name}</span>
                                             </button>
                                         ))
                                     )}
@@ -299,7 +299,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                         </div>
 
                         {/* Like */}
-                        <button className="p-3.5 rounded-full bg-white/5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 border border-white/10 hover:border-red-500/20 transition-all" title="Like">
+                        <button className="p-2.5 sm:p-3.5 rounded-full bg-white/5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 border border-white/10 hover:border-red-500/20 transition-all min-w-[44px] min-h-[44px] flex items-center justify-center" title="Like" aria-label="Like album">
                             <Heart size={18} />
                         </button>
 
@@ -307,8 +307,9 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                         <div className="relative" ref={moreMenuRef}>
                             <button
                                 onClick={() => setShowMoreMenu(v => !v)}
-                                className="p-3.5 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white border border-white/10 hover:border-white/20 transition-all"
+                                className="p-2.5 sm:p-3.5 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white border border-white/10 hover:border-white/20 transition-all min-w-[44px] min-h-[44px] flex items-center justify-center"
                                 title="More options"
+                                aria-label="More options"
                             >
                                 <MoreHorizontal size={18} />
                             </button>
@@ -368,9 +369,9 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                             <div
                                 key={track.id}
                                 onClick={() => handlePlayTrack(track)}
-                                className={`group grid grid-cols-[auto_1fr_auto] gap-4 items-center px-4 py-3.5 rounded-xl cursor-pointer transition-all border relative overflow-hidden ${isCurrent
+                                className={`group grid grid-cols-[auto_1fr_auto] gap-4 items-center px-4 py-3.5 rounded-xl cursor-pointer transition-all border relative overflow-hidden min-h-[56px] ${isCurrent
                                     ? 'bg-[#f4d35e]/[0.08] border-[#f4d35e]/15 shadow-sm'
-                                    : 'border-transparent hover:bg-white/5 hover:border-white/8'
+                                    : 'border-transparent hover:bg-white/5 hover:border-white/8 active:bg-white/5'
                                     }`}
                             >
                                 {isCurrent && <div className="absolute left-0 top-1/4 bottom-1/4 w-0.5 bg-[#f4d35e] rounded-full" />}
@@ -414,8 +415,9 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                                     {isLocalImport && (
                                         <button
                                             onClick={e => handleDeleteTrack(e, track)}
-                                            className="opacity-0 group-hover:opacity-100 p-1 rounded-lg text-zinc-600 hover:text-red-400 transition-all"
+                                            className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-2 rounded-lg text-zinc-600 hover:text-red-400 active:text-red-400 transition-all min-w-[36px] min-h-[36px] flex items-center justify-center"
                                             title="Remove track"
+                                            aria-label={`Remove ${track.title}`}
                                         >
                                             <Trash2 size={14} />
                                         </button>

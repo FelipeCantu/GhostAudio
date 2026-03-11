@@ -34,6 +34,30 @@ body {
   -moz-osx-font-smoothing: grayscale;
   /* Prevent horizontal scroll globally */
   overflow-x: hidden;
+  /* Prevent overscroll bounce on iOS */
+  overscroll-behavior-y: none;
+  /* Remove tap highlight on mobile */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Ensure interactive elements don't trigger callout on long-press */
+button, a {
+  -webkit-touch-callout: none;
+}
+
+/* Scrollable containers should show momentum scrolling on iOS */
+.overflow-y-auto,
+.overflow-y-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Hide scrollbar utility */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }
 
 /* Premium Selection */

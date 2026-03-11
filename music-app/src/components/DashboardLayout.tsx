@@ -7,7 +7,7 @@ import GlobalSearch from "./GlobalSearch";
 import KeyboardShortcutsModal from "./KeyboardShortcutsModal";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter, usePathname } from "next/navigation";
-import { Menu, Home, Library, Disc, ListMusic } from "lucide-react";
+import { Menu, Home, Library, Disc, ListMusic, Search } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { api, Album } from "@/services/api";
@@ -21,7 +21,7 @@ const mobileNavLinks = [
   { href: "/app", icon: Home, label: "Home" },
   { href: "/library", icon: Library, label: "Library" },
   { href: "/import", icon: Disc, label: "Import" },
-  { href: "/playlists/new", icon: ListMusic, label: "Playlists" },
+  { href: "/playlists", icon: ListMusic, label: "Playlists" },
 ];
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
@@ -29,6 +29,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const { currentTrack } = usePlayer();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [openSearch, setOpenSearch] = useState(false);
   const [searchAlbums, setSearchAlbums] = useState<Album[]>([]);
   const router = useRouter();
   const pathname = usePathname();
@@ -79,7 +80,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     return null;
   }
 
-  const isActiveNav = (href: string) => pathname === href;
+  const isActiveNav = (href: string) => {
+    if (href === "/playlists") return pathname.startsWith("/playlists");
+    return pathname === href;
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
@@ -119,8 +123,14 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             />
           </div>
 
-          {/* Placeholder to balance the header */}
-          <div className="w-[44px]" />
+          {/* Search trigger button — mobile only */}
+          <button
+            onClick={() => setOpenSearch(true)}
+            className="p-2 text-zinc-300 hover:text-white rounded-lg hover:bg-white/5 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+            aria-label="Search library"
+          >
+            <Search size={20} />
+          </button>
         </header>
 
         {/* Page Content */}
@@ -142,6 +152,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       <GlobalSearch
         albums={searchAlbums}
         onOpenShortcuts={() => setShowShortcuts(true)}
+        forceOpen={openSearch}
+        onForceOpenConsumed={() => setOpenSearch(false)}
       />
 
       {/* Keyboard Shortcuts Modal */}

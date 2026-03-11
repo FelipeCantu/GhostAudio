@@ -106,8 +106,8 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
         </div>
       )}
 
-      {/* Action Buttons — visible on hover (desktop) or always-on mobile via opacity-100 */}
-      <div className="absolute top-2 right-2 z-10 flex gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200">
+      {/* Action Buttons — always visible on touch devices, hover-only on desktop */}
+      <div className="absolute top-2 right-2 z-10 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-200">
         {/* Add to Playlist */}
         <div className="relative" ref={menuRef}>
           <button
@@ -177,11 +177,11 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
           </div>
         )}
 
-        {/* Play Overlay */}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+        {/* Play Overlay — shown on hover (desktop) or tap (mobile via active state) */}
+        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 active:opacity-100 transition-opacity duration-200 flex items-center justify-center">
           <button
             onClick={handlePlay}
-            className="w-12 h-12 rounded-full bg-[#f4d35e] text-[#0d3b66] flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-transform duration-200"
+            className="w-12 h-12 rounded-full bg-[#f4d35e] text-[#0d3b66] flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-transform duration-200 min-w-[44px] min-h-[44px]"
             aria-label={`Play ${album.title}`}
           >
             <Play size={22} fill="currentColor" className="ml-0.5" />

@@ -57,7 +57,7 @@ export default function ImportIndicator() {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -16, scale: 0.92 }}
                     transition={{ type: 'spring', stiffness: 320, damping: 28 }}
-                    className="fixed top-4 right-4 z-[60] w-64"
+                    className="fixed top-[72px] lg:top-4 right-4 z-[60] w-[min(256px,calc(100vw-32px))]"
                 >
                     <div
                         className={`rounded-2xl border backdrop-blur-xl shadow-2xl overflow-hidden transition-colors ${

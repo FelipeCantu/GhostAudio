@@ -220,10 +220,10 @@ export default function PlayerBar() {
                 {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
               </div>
 
-              {/* Progress bar */}
-              <div className="mb-6">
+              {/* Progress bar — taller touch hitbox via padding */}
+              <div className="mb-3">
                 <div
-                  className="relative h-1.5 bg-white/10 rounded-full cursor-pointer active:h-2 transition-all"
+                  className="relative h-2 bg-white/10 rounded-full cursor-pointer transition-all"
                   onClick={(e) => handleSeek(e, e.currentTarget)}
                   role="slider"
                   aria-label="Track progress"
@@ -634,10 +634,10 @@ export default function PlayerBar() {
             {/* ── Mobile: expand chevron ── */}
             <button
               onClick={() => setIsExpanded(true)}
-              className="md:hidden text-zinc-600 hover:text-zinc-400 transition-colors min-w-[32px] min-h-[32px] flex items-center justify-center"
+              className="md:hidden text-zinc-600 hover:text-zinc-400 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
               aria-label="Expand player"
             >
-              <ChevronDown size={16} className="rotate-180" />
+              <ChevronDown size={18} className="rotate-180" />
             </button>
           </div>
         </motion.div>

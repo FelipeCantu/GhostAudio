@@ -181,8 +181,14 @@ export default function WebImporter() {
                     </svg>
                 </div>
                 <div className="text-center">
-                    <p className="text-white font-medium">Drop audio files here</p>
-                    <p className="text-zinc-500 text-sm mt-1">or click to browse — MP3, FLAC, WAV, M4A, OGG</p>
+                    <p className="text-white font-medium">
+                        <span className="hidden sm:inline">Drop audio files here</span>
+                        <span className="sm:hidden">Tap to browse files</span>
+                    </p>
+                    <p className="text-zinc-500 text-sm mt-1">
+                        <span className="hidden sm:inline">or click to browse — </span>
+                        MP3, FLAC, WAV, M4A, OGG
+                    </p>
                 </div>
             </div>
 
@@ -265,7 +271,11 @@ export default function WebImporter() {
                                         <span className="text-xs text-zinc-600 w-5 shrink-0">{i + 1}</span>
                                         <span className="text-sm text-zinc-300 flex-1 truncate">{f.name}</span>
                                         <span className="text-xs text-zinc-600 shrink-0">{(f.size / 1024 / 1024).toFixed(1)} MB</span>
-                                        <button onClick={() => removeFile(i)} className="text-zinc-700 hover:text-zinc-400 transition-colors shrink-0">
+                                        <button
+                                            onClick={() => removeFile(i)}
+                                            className="text-zinc-700 hover:text-zinc-400 active:text-zinc-400 transition-colors shrink-0 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg hover:bg-white/5"
+                                            aria-label={`Remove ${f.name}`}
+                                        >
                                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                             </svg>
@@ -285,13 +295,13 @@ export default function WebImporter() {
                             <button
                                 onClick={handleImport}
                                 disabled={!files.length}
-                                className="flex-1 py-2.5 rounded-xl bg-white text-black text-sm font-semibold hover:bg-zinc-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="flex-1 py-3 rounded-xl bg-white text-black text-sm font-semibold hover:bg-zinc-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed min-h-[48px]"
                             >
                                 Import {files.length} Track{files.length !== 1 ? 's' : ''}
                             </button>
                             <button
                                 onClick={reset}
-                                className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 text-sm font-medium transition-colors"
+                                className="px-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 text-sm font-medium transition-colors min-h-[48px]"
                             >
                                 Clear
                             </button>

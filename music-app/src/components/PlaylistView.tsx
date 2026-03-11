@@ -9,6 +9,7 @@ import {
     closestCenter,
     KeyboardSensor,
     PointerSensor,
+    TouchSensor,
     useSensor,
     useSensors,
     DragEndEvent,
@@ -51,22 +52,23 @@ function SortableRow({ item, index, isCurrentTrack, isPlaying, onPlay, onRemove 
             ref={setNodeRef}
             style={style}
             onClick={onPlay}
-            className={`group grid grid-cols-[auto_auto_1fr_1fr_auto_auto] gap-3 items-center px-4 py-3 rounded-lg cursor-pointer transition-all border border-transparent ${
-                isCurrentTrack ? 'bg-primary/10 border-primary/20' : 'hover:bg-white/5 hover:border-white/5'
+            className={`group flex items-center gap-2 px-2 sm:px-4 py-3 rounded-lg cursor-pointer transition-all border border-transparent min-h-[56px] ${
+                isCurrentTrack ? 'bg-primary/10 border-primary/20' : 'hover:bg-white/5 hover:border-white/5 active:bg-white/5'
             }`}
         >
-            {/* Drag handle */}
+            {/* Drag handle — always visible on mobile, hover-only on desktop */}
             <div
                 {...attributes}
                 {...listeners}
                 onClick={e => e.stopPropagation()}
-                className="text-zinc-600 hover:text-zinc-300 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
+                className="text-zinc-600 hover:text-zinc-300 cursor-grab active:cursor-grabbing opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex-shrink-0 p-1 min-w-[28px] min-h-[28px] flex items-center justify-center touch-none"
+                aria-label="Drag to reorder"
             >
-                <GripVertical size={16} />
+                <GripVertical size={15} />
             </div>
 
-            {/* Position */}
-            <div className="w-6 text-center text-sm text-zinc-500 font-medium">
+            {/* Position — hidden on very small screens */}
+            <div className="hidden sm:flex w-6 text-center text-sm text-zinc-500 font-medium flex-shrink-0 items-center justify-center">
                 {isCurrentTrack && isPlaying ? (
                     <div className="flex items-end gap-0.5 h-3 justify-center">
                         <span className="w-0.5 h-full bg-primary animate-[music-bar_0.5s_ease-in-out_infinite]" />
@@ -78,31 +80,41 @@ function SortableRow({ item, index, isCurrentTrack, isPlaying, onPlay, onRemove 
                 )}
             </div>
 
-            {/* Cover art */}
-            <div className="flex items-center gap-3 min-w-0">
+            {/* Cover art + track info */}
+            <div className="flex items-center gap-2.5 flex-1 min-w-0">
                 {item.coverArt ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={item.coverArt} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={e => (e.currentTarget.style.display = 'none')} />
+                    <img
+                        src={item.coverArt}
+                        alt=""
+                        className="w-9 h-9 rounded object-cover flex-shrink-0"
+                        onError={e => (e.currentTarget.style.display = 'none')}
+                    />
                 ) : (
-                    <div className="w-8 h-8 rounded bg-zinc-800 flex-shrink-0" />
+                    <div className="w-9 h-9 rounded bg-zinc-800 flex-shrink-0" />
                 )}
-                <div className="min-w-0">
-                    <p className={`text-sm font-medium truncate ${isCurrentTrack ? 'text-primary' : 'text-zinc-200'}`}>{item.title}</p>
+                <div className="min-w-0 flex-1">
+                    <p className={`text-sm font-medium truncate ${isCurrentTrack ? 'text-primary' : 'text-zinc-200'}`}>
+                        {item.title}
+                    </p>
                     <p className="text-xs text-zinc-500 truncate">{item.artist}</p>
                 </div>
             </div>
 
-            {/* Album */}
-            <p className="text-sm text-zinc-500 truncate hidden md:block">{item.albumTitle}</p>
+            {/* Album — hidden on mobile */}
+            <p className="text-sm text-zinc-500 truncate hidden lg:block w-32 xl:w-44 flex-shrink-0">{item.albumTitle}</p>
 
             {/* Duration */}
-            <p className={`text-sm font-mono ${isCurrentTrack ? 'text-white' : 'text-zinc-500'}`}>{item.duration || '--:--'}</p>
+            <p className={`text-sm font-mono flex-shrink-0 ${isCurrentTrack ? 'text-white' : 'text-zinc-500'}`}>
+                {item.duration || '--:--'}
+            </p>
 
-            {/* Remove */}
+            {/* Remove — always visible on mobile, hover-only on desktop */}
             <button
                 onClick={e => { e.stopPropagation(); onRemove(); }}
-                className="p-1.5 rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-400/10 opacity-0 group-hover:opacity-100 transition-all"
+                className="flex-shrink-0 p-2 rounded-lg text-zinc-600 hover:text-red-400 active:text-red-400 hover:bg-red-400/10 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all min-w-[36px] min-h-[36px] flex items-center justify-center"
                 title="Remove from playlist"
+                aria-label={`Remove ${item.title} from playlist`}
             >
                 <Trash2 size={14} />
             </button>
@@ -114,11 +126,11 @@ export default function PlaylistView({ playlist, onItemsReorder, onRemoveItem }:
     const { playPlaylist, currentTrack, isPlaying } = usePlayer();
     const [localItems, setLocalItems] = useState<PlaylistItem[]>(playlist.items || []);
 
-    // Keep local items in sync if parent playlist changes
     const items = localItems;
 
     const sensors = useSensors(
-        useSensor(PointerSensor),
+        useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+        useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
         useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
     );
 
@@ -142,7 +154,7 @@ export default function PlaylistView({ playlist, onItemsReorder, onRemoveItem }:
         await onRemoveItem(index);
     };
 
-    const isCurrentTrack = (item: PlaylistItem) => {
+    const isCurrentTrackFn = (item: PlaylistItem) => {
         return currentTrack?.audio_file === item.audioFile;
     };
 
@@ -158,13 +170,13 @@ export default function PlaylistView({ playlist, onItemsReorder, onRemoveItem }:
     return (
         <div>
             {/* Table header */}
-            <div className="grid grid-cols-[auto_auto_1fr_1fr_auto_auto] gap-3 px-4 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-white/5 mb-1">
-                <div className="w-4" />
-                <div className="w-6 text-center">#</div>
-                <div>Title</div>
-                <div className="hidden md:block">Album</div>
-                <div>Time</div>
-                <div className="w-8" />
+            <div className="flex items-center gap-2 px-2 sm:px-4 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-white/5 mb-1">
+                <div className="w-7 flex-shrink-0" aria-hidden="true" />
+                <div className="hidden sm:block w-6 flex-shrink-0 text-center">#</div>
+                <div className="flex-1">Title</div>
+                <div className="hidden lg:block w-32 xl:w-44 flex-shrink-0">Album</div>
+                <div className="flex-shrink-0">Time</div>
+                <div className="w-9 flex-shrink-0" aria-hidden="true" />
             </div>
 
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -178,8 +190,8 @@ export default function PlaylistView({ playlist, onItemsReorder, onRemoveItem }:
                                 key={`item-${index}-${item.audioFile}`}
                                 item={item}
                                 index={index}
-                                isCurrentTrack={isCurrentTrack(item)}
-                                isPlaying={isCurrentTrack(item) && isPlaying}
+                                isCurrentTrack={isCurrentTrackFn(item)}
+                                isPlaying={isCurrentTrackFn(item) && isPlaying}
                                 onPlay={() => playPlaylist({ ...playlist, items }, index)}
                                 onRemove={() => handleRemove(index)}
                             />

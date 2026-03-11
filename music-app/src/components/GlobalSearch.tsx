@@ -9,13 +9,24 @@ import { Album } from "@/services/api";
 interface GlobalSearchProps {
   albums: Album[];
   onOpenShortcuts: () => void;
+  /** When true, programmatically open the search overlay (e.g. from mobile search button) */
+  forceOpen?: boolean;
+  onForceOpenConsumed?: () => void;
 }
 
-export default function GlobalSearch({ albums, onOpenShortcuts }: GlobalSearchProps) {
+export default function GlobalSearch({ albums, onOpenShortcuts, forceOpen, onForceOpenConsumed }: GlobalSearchProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Handle programmatic open (e.g. mobile search button)
+  useEffect(() => {
+    if (forceOpen) {
+      setIsOpen(true);
+      onForceOpenConsumed?.();
+    }
+  }, [forceOpen, onForceOpenConsumed]);
 
   // Cmd/Ctrl+K to open; ? to open shortcuts (when no input focused)
   useEffect(() => {
@@ -241,8 +252,8 @@ export default function GlobalSearch({ albums, onOpenShortcuts }: GlobalSearchPr
                 )}
               </AnimatePresence>
 
-              {/* Hint footer */}
-              <div className="flex items-center justify-end gap-3 mt-2 px-1">
+              {/* Hint footer — desktop only, not useful on mobile */}
+              <div className="hidden sm:flex items-center justify-end gap-3 mt-2 px-1">
                 <span className="text-xs text-zinc-600">
                   <kbd className="inline-flex items-center px-1.5 py-0.5 bg-white/6 border border-white/8 rounded text-[10px] font-mono text-zinc-500">↑↓</kbd>{" "}
                   navigate
