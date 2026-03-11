@@ -308,6 +308,41 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             setIsPlaying(false);
         };
 
+        // Browser paused the download (e.g. buffered enough, or network idle).
+        // No action needed — playback continues from the buffer; keep UI state as-is.
+        const handleSuspend = () => {
+            // If audio is unexpectedly paused while we think we're playing, the
+            // handlePause listener already handles state sync. Nothing more to do.
+        };
+
+        // Network stall — no data arriving. Wait 2 s then try to recover by
+        // re-seeking to the current position, which re-triggers buffering.
+        const handleStalled = () => {
+            const currentTime = audio.currentTime;
+            setTimeout(() => {
+                if (audio.paused && audioRef.current === audio) {
+                    audio.currentTime = currentTime;
+                    audio.play().catch(() => {});
+                }
+            }, 2000);
+        };
+
+        // The media load was aborted (e.g. src changed mid-load).
+        const handleAbort = () => {
+            setIsLoading(false);
+            setIsPlaying(false);
+        };
+
+        // Some Electron versions pause audio when the window is hidden.
+        // On becoming visible again, sync React state with actual audio state.
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === "visible" && audioRef.current) {
+                if (!audioRef.current.paused) {
+                    setIsPlaying(true);
+                }
+            }
+        };
+
         audio.addEventListener("timeupdate", handleTimeUpdate);
         audio.addEventListener("loadedmetadata", handleLoadedMetadata);
         audio.addEventListener("durationchange", handleDurationChange);
@@ -317,6 +352,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         audio.addEventListener("waiting", handleWaiting);
         audio.addEventListener("playing", handlePlaying);
         audio.addEventListener("pause", handlePause);
+        audio.addEventListener("suspend", handleSuspend);
+        audio.addEventListener("stalled", handleStalled);
+        audio.addEventListener("abort", handleAbort);
+        document.addEventListener("visibilitychange", handleVisibilityChange);
 
         return () => {
             audio.pause();
@@ -329,6 +368,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             audio.removeEventListener("waiting", handleWaiting);
             audio.removeEventListener("playing", handlePlaying);
             audio.removeEventListener("pause", handlePause);
+            audio.removeEventListener("suspend", handleSuspend);
+            audio.removeEventListener("stalled", handleStalled);
+            audio.removeEventListener("abort", handleAbort);
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
         };
         // nextTrackFromRefs and incrementPlayCount/addToRecentlyPlayed are stable useCallback refs
         // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -107,7 +107,7 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
       )}
 
       {/* Action Buttons — always visible on touch devices, hover-only on desktop */}
-      <div className="absolute top-2 right-2 z-10 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-200">
+      <div className="absolute top-1 right-1 z-10 flex gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-200">
         {/* Add to Playlist */}
         <div className="relative" ref={menuRef}>
           <button
@@ -115,7 +115,7 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
               e.stopPropagation();
               setShowPlaylistMenu((v) => !v);
             }}
-            className={`p-2 rounded-xl bg-black/70 hover:bg-black/90 transition-all min-w-[32px] min-h-[32px] flex items-center justify-center ${
+            className={`p-2 rounded-xl bg-black/70 hover:bg-black/90 transition-all min-w-[44px] min-h-[44px] flex items-center justify-center ${
               addedFlash ? "text-[#f4d35e]" : "text-zinc-300 hover:text-[#f4d35e]"
             }`}
             title="Add to playlist"
@@ -151,7 +151,7 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
         {onDelete && (
           <button
             onClick={handleDeleteClick}
-            className="p-2 rounded-xl bg-black/70 text-zinc-300 hover:text-red-400 hover:bg-black/90 transition-all min-w-[32px] min-h-[32px] flex items-center justify-center"
+            className="p-2 rounded-xl bg-black/70 text-zinc-300 hover:text-red-400 hover:bg-black/90 transition-all min-w-[44px] min-h-[44px] flex items-center justify-center"
             title="Delete album"
             aria-label="Delete album"
           >

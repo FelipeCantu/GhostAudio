@@ -86,7 +86,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+    <div className="flex h-screen overflow-hidden max-w-[100vw] bg-background text-foreground">
       {/* Ambient Background */}
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-primary/5 blur-[120px] animate-pulse" />
@@ -102,7 +102,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       <ImportIndicator />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 lg:ml-64 transition-all duration-300">
+      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden lg:ml-64 transition-all duration-300">
         {/* Mobile Header */}
         <header className="lg:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-background/95 backdrop-blur-md border-b border-white/5 h-14">
           <button
@@ -135,7 +135,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
         {/* Page Content */}
         <main
-          className="flex-1 p-4 md:p-8 relative z-10 overflow-y-auto"
+          className="flex-1 p-4 md:p-8 relative z-10 overflow-y-auto overflow-x-hidden"
           style={{
             paddingBottom: currentTrack
               ? "calc(9rem + env(safe-area-inset-bottom, 0px))"
@@ -164,8 +164,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
       {/* Mobile Bottom Navigation Bar */}
       <nav
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-background/95 backdrop-blur-xl border-t border-white/10 flex items-center justify-around"
-        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)", height: "64px" }}
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-background/95 backdrop-blur-xl border-t border-white/10 flex items-start justify-around"
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)", minHeight: "64px" }}
         aria-label="Mobile navigation"
       >
         {mobileNavLinks.map(({ href, icon: Icon, label }) => {
@@ -174,7 +174,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             <Link
               key={href}
               href={href}
-              className={`flex flex-col items-center justify-center gap-1 flex-1 h-full transition-colors min-w-[44px] ${
+              className={`flex flex-col items-center justify-center gap-1 flex-1 min-h-[64px] pt-3 pb-2 transition-colors min-w-[44px] ${
                 active ? "text-[#f4d35e]" : "text-zinc-500 hover:text-zinc-300"
               }`}
               aria-label={label}

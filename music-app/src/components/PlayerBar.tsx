@@ -64,6 +64,9 @@ export default function PlayerBar() {
   const [cdArtUrl, setCdArtUrl] = useState<string | null>(null);
   const pathname = usePathname();
 
+  // In-component cache so the same MBID is never re-fetched across track changes
+  const cdArtCache = useRef<Map<string, string | null>>(new Map());
+
   // Refs for click-outside detection on the queue panel
   const queuePanelRef = useRef<HTMLDivElement>(null);
   const queueButtonRef = useRef<HTMLButtonElement>(null);
@@ -82,7 +85,9 @@ export default function PlayerBar() {
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [showQueue]);
 
-  // Fetch the "Medium" CD image from Cover Art Archive when track changes
+  // Fetch the "Medium" CD image from Cover Art Archive when track changes.
+  // Uses an AbortController (3 s timeout) and an in-component Map cache so
+  // the same MBID is never re-fetched and stale responses are ignored.
   useEffect(() => {
     setCdArtUrl(null);
     setDiscImgError(false);
@@ -90,15 +95,35 @@ export default function PlayerBar() {
     if (!art) return;
     const mbid = art.match(/coverartarchive\.org\/release\/([0-9a-f-]{36})/i)?.[1];
     if (!mbid) return;
-    fetch(`https://coverartarchive.org/release/${mbid}`)
+
+    // Serve from cache if available (null means "already fetched, no Medium art")
+    if (cdArtCache.current.has(mbid)) {
+      setCdArtUrl(cdArtCache.current.get(mbid) ?? null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    fetch(`https://coverartarchive.org/release/${mbid}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
-        const medium = data.images?.find(
-          (img: any) => Array.isArray(img.types) && img.types.includes("Medium")
+        const medium = (data.images as Array<{ types: string[]; image: string }> | undefined)?.find(
+          (img) => Array.isArray(img.types) && img.types.includes("Medium")
         );
-        if (medium?.image) setCdArtUrl(medium.image);
+        const url = medium?.image ?? null;
+        cdArtCache.current.set(mbid, url);
+        setCdArtUrl(url);
       })
-      .catch(() => {});
+      .catch(() => {
+        // AbortError (timeout) or network failure — silently ignore
+      })
+      .finally(() => clearTimeout(timeoutId));
+
+    return () => {
+      controller.abort();
+      clearTimeout(timeoutId);
+    };
   }, [currentAlbum?.coverArt]);
 
   // Hide player on landing page or if no track loaded
@@ -227,6 +252,7 @@ export default function PlayerBar() {
                         src={cdArtUrl || coverArt!}
                         alt={currentAlbum?.title ?? "Now playing"}
                         className="w-full h-full object-cover"
+                        loading="lazy"
                         onError={() => {
                           // If cdArtUrl failed, retry with plain coverArt
                           if (cdArtUrl) { setCdArtUrl(null); }

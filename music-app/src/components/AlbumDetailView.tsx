@@ -200,7 +200,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
             {/* Header Section */}
             <div className="flex flex-col md:flex-row gap-8 mb-10">
                 {/* Cover Art */}
-                <div className="relative z-10 w-48 h-48 sm:w-64 sm:h-64 md:w-72 md:h-72 lg:w-80 lg:h-80 flex-shrink-0 rounded-2xl overflow-hidden bg-black/40 shadow-2xl mx-auto md:mx-0 border border-white/10 group">
+                <div className="relative z-10 w-40 h-40 sm:w-56 sm:h-56 md:w-72 md:h-72 lg:w-80 lg:h-80 flex-shrink-0 rounded-2xl overflow-hidden bg-black/40 shadow-2xl mx-auto md:mx-0 border border-white/10 group">
                     {coverArt && !imgError ? (
                         <Image
                             src={coverArt}
@@ -220,7 +220,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                 {/* Album Info */}
                 <div className="flex flex-col justify-end text-center md:text-left flex-1 min-w-0">
                     <p className="text-sm font-bold uppercase tracking-widest text-primary mb-2">Album</p>
-                    <h1 className="text-3xl md:text-5xl lg:text-6xl font-black text-white mb-2 tracking-tight leading-tight">{localAlbum.title}</h1>
+                    <h1 className="text-2xl sm:text-3xl md:text-5xl lg:text-6xl font-black text-white mb-2 tracking-tight leading-tight break-words">{localAlbum.title}</h1>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 justify-center md:justify-start text-base text-zinc-300 mb-6">
                         <span className="font-medium text-white">{localAlbum.artist}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 hidden sm:block" />
@@ -278,7 +278,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                                 <span className="hidden sm:inline">Add to Playlist</span>
                             </button>
                             {showPlaylistMenu && (
-                                <div className="absolute top-full left-0 mt-2 w-56 max-h-60 overflow-y-auto bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50">
+                                <div className="absolute top-full right-0 mt-2 w-56 max-h-60 overflow-y-auto bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50">
                                     <div className="sticky top-0 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-zinc-500 border-b border-white/5 bg-zinc-900/95 backdrop-blur-sm">Add to playlist</div>
                                     {playlists.filter(p => !p.is_smart).length === 0 ? (
                                         <p className="px-4 py-3 text-sm text-zinc-500">No manual playlists.</p>
@@ -314,7 +314,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                                 <MoreHorizontal size={18} />
                             </button>
                             {showMoreMenu && (
-                                <div className="absolute top-full left-0 mt-2 w-44 bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                                <div className="absolute top-full right-0 mt-2 w-44 bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden">
                                     {isLocalImport ? (
                                         <button
                                             onClick={() => { setShowMoreMenu(false); setShowEditModal(true); }}
@@ -352,7 +352,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
             {/* Tracks List */}
             <div className="flex-1">
                 {/* Table Header */}
-                <div className="grid grid-cols-[auto_1fr_auto] gap-4 px-6 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-white/5 mb-2">
+                <div className="grid grid-cols-[auto_1fr_auto] gap-3 px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-white/5 mb-2">
                     <div className="w-8 text-center">#</div>
                     <div>Title</div>
                     <div className="flex items-center justify-end gap-2">

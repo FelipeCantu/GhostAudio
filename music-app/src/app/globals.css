@@ -125,4 +125,6 @@ button, a {
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* Belt-and-suspenders horizontal overflow lock */
+  overflow-x: hidden;
 }
