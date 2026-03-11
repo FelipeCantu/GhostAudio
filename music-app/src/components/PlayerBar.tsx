@@ -60,6 +60,8 @@ export default function PlayerBar() {
   const [prevVolume, setPrevVolume] = useState(1);
   const [isExpanded, setIsExpanded] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
+  const [discImgError, setDiscImgError] = useState(false);
+  const [cdArtUrl, setCdArtUrl] = useState<string | null>(null);
   const pathname = usePathname();
 
   // Refs for click-outside detection on the queue panel
@@ -79,6 +81,25 @@ export default function PlayerBar() {
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [showQueue]);
+
+  // Fetch the "Medium" CD image from Cover Art Archive when track changes
+  useEffect(() => {
+    setCdArtUrl(null);
+    setDiscImgError(false);
+    const art = currentAlbum?.coverArt;
+    if (!art) return;
+    const mbid = art.match(/coverartarchive\.org\/release\/([0-9a-f-]{36})/i)?.[1];
+    if (!mbid) return;
+    fetch(`https://coverartarchive.org/release/${mbid}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const medium = data.images?.find(
+          (img: any) => Array.isArray(img.types) && img.types.includes("Medium")
+        );
+        if (medium?.image) setCdArtUrl(medium.image);
+      })
+      .catch(() => {});
+  }, [currentAlbum?.coverArt]);
 
   // Hide player on landing page or if no track loaded
   if (!currentTrack || pathname === "/") return null;
@@ -129,22 +150,25 @@ export default function PlayerBar() {
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-0 z-[60] lg:hidden flex flex-col"
-            style={{
-              background: "linear-gradient(180deg, #0d1b2a 0%, #0a1520 60%, #060e16 100%)",
-            }}
+            className="fixed inset-0 z-[60] lg:hidden flex flex-col bg-[#060e16]"
           >
-            {/* Blurred cover art backdrop */}
+            {/* Blurred cover art backdrop — Spotify/Apple Music style */}
             {coverArt && (
-              <div
-                className="absolute inset-0 opacity-20"
-                style={{
-                  backgroundImage: `url(${coverArt})`,
-                  backgroundSize: "cover",
-                  backgroundPosition: "center",
-                  filter: "blur(40px)",
-                }}
-              />
+              <>
+                <div
+                  className="absolute inset-0"
+                  style={{
+                    backgroundImage: `url(${coverArt})`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                    filter: "blur(60px)",
+                    transform: "scale(1.3)",
+                    opacity: 0.85,
+                  }}
+                />
+                {/* Gradient fade: art dominates top half → near-black at bottom for controls */}
+                <div className="absolute inset-0 bg-gradient-to-b from-black/5 via-black/40 to-black/90" />
+              </>
             )}
 
             <div className="relative z-10 flex flex-col h-full px-6 pt-safe">
@@ -193,18 +217,70 @@ export default function PlayerBar() {
                     ease: "linear",
                     ...(isPlaying ? {} : { repeatType: "loop" }),
                   }}
-                  className="w-64 h-64 rounded-full overflow-hidden bg-gradient-to-br from-zinc-800 to-zinc-900 shadow-2xl shadow-black/50 border border-white/10 flex items-center justify-center"
-                  style={isPlaying ? {} : { animationPlayState: "paused" }}
+                  className="relative w-64 h-64 rounded-full overflow-hidden shadow-2xl shadow-black/60"
+                  style={!isPlaying ? { animationPlayState: "paused" } : {}}
                 >
-                  {coverArt ? (
-                    <img
-                      src={coverArt}
-                      alt={currentAlbum?.title ?? "Now playing"}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <Disc size={80} className="text-zinc-600" />
-                  )}
+                  {/* CD label — Medium image from Cover Art Archive, falls back to front cover */}
+                  <div className="absolute inset-0">
+                    {(cdArtUrl || coverArt) && !discImgError ? (
+                      <img
+                        src={cdArtUrl || coverArt!}
+                        alt={currentAlbum?.title ?? "Now playing"}
+                        className="w-full h-full object-cover"
+                        onError={() => {
+                          // If cdArtUrl failed, retry with plain coverArt
+                          if (cdArtUrl) { setCdArtUrl(null); }
+                          else { setDiscImgError(true); }
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-br from-zinc-800 to-zinc-900 flex items-center justify-center">
+                        <Disc size={80} className="text-zinc-600" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Outer dark polycarbonate rim */}
+                  <div
+                    className="absolute inset-0 rounded-full"
+                    style={{
+                      background:
+                        "radial-gradient(circle, transparent 83%, rgba(0,0,0,0.5) 87%, rgba(0,0,0,0.85) 100%)",
+                    }}
+                  />
+
+                  {/* Iridescent CD data ring — subtle hint, not a wash */}
+                  <div
+                    className="absolute inset-0 rounded-full"
+                    style={{
+                      background:
+                        "conic-gradient(from 0deg, #ff6b6b33, #ffd93d33, #6bcb7733, #4d96ff33, #c77dff33, #ff9f1c33, #ff6b6b33)",
+                      maskImage:
+                        "radial-gradient(circle, transparent 82%, black 84%, black 95%, transparent 97%)",
+                      WebkitMaskImage:
+                        "radial-gradient(circle, transparent 82%, black 84%, black 95%, transparent 97%)",
+                    }}
+                  />
+
+                  {/* Surface sheen / light reflection — very subtle */}
+                  <div
+                    className="absolute inset-0 rounded-full"
+                    style={{
+                      background:
+                        "linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 45%, rgba(0,0,0,0.10) 100%)",
+                    }}
+                  />
+
+                  {/* Center hub hole */}
+                  <div
+                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full z-10"
+                    style={{
+                      background:
+                        "radial-gradient(circle, rgba(20,25,35,0.95) 40%, rgba(8,12,20,0.98) 100%)",
+                      boxShadow:
+                        "inset 0 1px 4px rgba(255,255,255,0.12), 0 0 0 1px rgba(255,255,255,0.07)",
+                    }}
+                  />
                 </motion.div>
               </div>
 
