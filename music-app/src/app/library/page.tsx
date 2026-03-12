@@ -1042,21 +1042,19 @@ export default function LibraryPage() {
                     ) : (
                       <>
                         {/* Column headers */}
-                        <div className="hidden sm:grid grid-cols-[2rem_1fr_1fr_1fr_4rem] gap-4 px-4 mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-600 select-none">
-                          <span className="text-center">#</span>
+                        <div className="hidden sm:grid grid-cols-[2.5rem_1fr_1fr_4rem] gap-3 px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-zinc-600 select-none">
+                          <span />
                           <span>Title</span>
-                          <span>Artist</span>
                           <span>Album</span>
                           <span className="text-right">Time</span>
                         </div>
                         <div className="space-y-0.5">
                           {filteredTracks.map((track, idx) => {
-                            const trackId = String(track.id);
-                            const currentId = currentTrack ? String((currentTrack as any)._id || currentTrack.id) : null;
-                            const isActive = currentId === trackId;
+                            const isActive = !!currentTrack && currentTrack.audio_file === track.audio_file;
+                            const coverArt = track.albumInfo.coverArt;
                             return (
                               <motion.button
-                                key={`${trackId}-${idx}`}
+                                key={`${track.audio_file}-${idx}`}
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
                                 transition={{ delay: Math.min(idx * 0.01, 0.3) }}
@@ -1067,51 +1065,60 @@ export default function LibraryPage() {
                                     track.albumInfo
                                   )
                                 }
-                                className={`w-full grid grid-cols-[2rem_1fr] sm:grid-cols-[2rem_1fr_1fr_1fr_4rem] gap-4 items-center px-4 py-2.5 rounded-xl transition-all group text-left ${
+                                className={`w-full grid grid-cols-[2.5rem_1fr] sm:grid-cols-[2.5rem_1fr_1fr_4rem] gap-3 items-center px-3 py-2 rounded-xl transition-all group text-left ${
                                   isActive
                                     ? "bg-[#f4d35e]/8 border border-[#f4d35e]/15"
-                                    : "hover:bg-white/5 border border-transparent hover:border-white/8"
+                                    : "hover:bg-white/5 border border-transparent hover:border-white/5"
                                 }`}
                                 aria-label={`Play ${track.title}`}
                               >
-                                {/* Index / playing indicator */}
-                                <span className="flex items-center justify-center min-w-0">
-                                  {isActive ? (
-                                    <span className="flex gap-[3px] items-end h-4">
-                                      <span className="w-[3px] bg-[#f4d35e] rounded-full animate-[bounce_0.8s_ease-in-out_infinite]" style={{ height: "60%" }} />
-                                      <span className="w-[3px] bg-[#f4d35e] rounded-full animate-[bounce_0.8s_ease-in-out_0.15s_infinite]" style={{ height: "100%" }} />
-                                      <span className="w-[3px] bg-[#f4d35e] rounded-full animate-[bounce_0.8s_ease-in-out_0.3s_infinite]" style={{ height: "75%" }} />
-                                    </span>
+                                {/* Cover art thumbnail with play/equalizer overlay */}
+                                <div className="relative w-10 h-10 flex-shrink-0 rounded-lg overflow-hidden bg-white/5 border border-white/8">
+                                  {coverArt ? (
+                                    <Image
+                                      src={coverArt}
+                                      alt=""
+                                      width={40}
+                                      height={40}
+                                      className="w-full h-full object-cover"
+                                    />
                                   ) : (
-                                    <>
-                                      <span className="text-xs text-zinc-600 group-hover:hidden">
-                                        {idx + 1}
-                                      </span>
-                                      <Play
-                                        size={13}
-                                        className="hidden group-hover:block text-white ml-0.5"
-                                        fill="currentColor"
-                                      />
-                                    </>
+                                    <div className="w-full h-full flex items-center justify-center text-zinc-700">
+                                      <Music size={16} />
+                                    </div>
                                   )}
-                                </span>
+                                  {/* Overlay: play icon on hover, equalizer when active */}
+                                  <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${
+                                    isActive
+                                      ? "bg-black/50 opacity-100"
+                                      : "bg-black/50 opacity-0 group-hover:opacity-100"
+                                  }`}>
+                                    {isActive ? (
+                                      <span className="flex gap-[2px] items-end h-3.5">
+                                        <span className="w-[3px] bg-[#f4d35e] rounded-full animate-[bounce_0.7s_ease-in-out_infinite]" style={{ height: "55%" }} />
+                                        <span className="w-[3px] bg-[#f4d35e] rounded-full animate-[bounce_0.7s_ease-in-out_0.15s_infinite]" style={{ height: "100%" }} />
+                                        <span className="w-[3px] bg-[#f4d35e] rounded-full animate-[bounce_0.7s_ease-in-out_0.3s_infinite]" style={{ height: "70%" }} />
+                                      </span>
+                                    ) : (
+                                      <Play size={14} className="text-white ml-0.5" fill="currentColor" />
+                                    )}
+                                  </div>
+                                </div>
 
-                                {/* Title */}
-                                <span
-                                  className={`text-sm font-medium truncate ${
+                                {/* Title + artist stacked */}
+                                <div className="min-w-0">
+                                  <p className={`text-sm font-semibold truncate leading-tight ${
                                     isActive ? "text-[#f4d35e]" : "text-white group-hover:text-[#f4d35e] transition-colors"
-                                  }`}
-                                >
-                                  {track.title}
-                                </span>
-
-                                {/* Artist */}
-                                <span className="text-sm text-zinc-400 truncate hidden sm:block">
-                                  {track.albumInfo.artist}
-                                </span>
+                                  }`}>
+                                    {track.title}
+                                  </p>
+                                  <p className="text-xs text-zinc-400 truncate mt-0.5 leading-tight">
+                                    {track.albumInfo.artist}
+                                  </p>
+                                </div>
 
                                 {/* Album */}
-                                <span className="text-sm text-zinc-500 truncate hidden sm:block">
+                                <span className="text-xs text-zinc-500 truncate hidden sm:block">
                                   {track.albumInfo.title}
                                 </span>
 
