@@ -146,7 +146,6 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
             }
 
             const coverUrl = `https://coverartarchive.org/release/${release.id}/front`;
-            // Verify the image is accessible before saving
             const imgCheck = await fetch(coverUrl, { method: 'HEAD' });
             if (!imgCheck.ok) {
                 setCoverFetchMessage('No cover art found');
@@ -178,118 +177,162 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                 }}
             />
         )}
-        <div className="relative flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* Background Blur Effect */}
-            {coverArt && (
-                <div className="absolute inset-x-0 top-0 h-[70vh] z-0 pointer-events-none">
-                    <div
-                        className="absolute inset-0 opacity-35"
-                        style={{
-                            backgroundImage: `url(${coverArt})`,
-                            backgroundSize: "cover",
-                            backgroundPosition: "center",
-                            filter: "blur(60px)",
-                            transform: "scale(1.3)",
-                        }}
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-background/60 to-background" />
-                </div>
-            )}
 
-            {/* Back Button */}
-            <div className="mb-6">
+        {/* Toast notifications — fixed, above player bar */}
+        {(addedToast || coverFetchMessage) && (
+            <div className="fixed bottom-24 lg:bottom-20 left-1/2 -translate-x-1/2 z-[60] pointer-events-none">
+                {addedToast && (
+                    <div className="flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-zinc-900/95 border border-white/10 backdrop-blur-xl shadow-2xl text-sm text-white animate-in fade-in slide-in-from-bottom-3 duration-300">
+                        <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[#f4d35e]/15">
+                            <Check size={11} className="text-[#f4d35e]" />
+                        </span>
+                        {addedToast}
+                    </div>
+                )}
+                {coverFetchMessage && (
+                    <div className="flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-zinc-900/95 border border-white/10 backdrop-blur-xl shadow-2xl text-sm text-zinc-300 animate-in fade-in slide-in-from-bottom-3 duration-300">
+                        <ImagePlus size={14} className="text-zinc-500 flex-shrink-0" />
+                        {coverFetchMessage}
+                    </div>
+                )}
+            </div>
+        )}
+
+        <div className="relative flex flex-col h-full animate-in fade-in duration-300">
+
+            {/* Backdrop — full bleed color wash from cover art */}
+            <div className="absolute inset-x-0 top-0 h-[55vh] min-h-[340px] z-0 pointer-events-none overflow-hidden">
+                {coverArt ? (
+                    <>
+                        <div
+                            className="absolute inset-0 opacity-40"
+                            style={{
+                                backgroundImage: `url(${coverArt})`,
+                                backgroundSize: "cover",
+                                backgroundPosition: "center top",
+                                filter: "blur(80px) saturate(1.4)",
+                                transform: "scale(1.5)",
+                            }}
+                        />
+                        {/* Vignette: top fade to near-transparent, bottom fade to background */}
+                        <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-[var(--background,#0d3b66)]" />
+                        <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[var(--background,#0d3b66)] to-transparent" />
+                    </>
+                ) : (
+                    <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent" />
+                )}
+            </div>
+
+            {/* Back button — minimal ghost link */}
+            <div className="relative z-10 mb-8">
                 <button
                     onClick={onBack}
-                    className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all group backdrop-blur-md border border-white/5"
+                    className="group inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors duration-150"
                 >
-                    <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
-                    Back to Library
+                    <ArrowLeft
+                        size={16}
+                        className="transition-transform duration-200 group-hover:-translate-x-0.5"
+                    />
+                    <span>Library</span>
                 </button>
             </div>
 
-            {/* Header Section */}
-            <div className="flex flex-col md:flex-row gap-8 mb-10">
-                {/* Cover Art */}
-                <div className="relative z-10 w-40 h-40 sm:w-56 sm:h-56 md:w-72 md:h-72 lg:w-80 lg:h-80 flex-shrink-0 rounded-2xl overflow-hidden bg-black/40 shadow-2xl mx-auto md:mx-0 border border-white/10 group">
-                    {coverArt && !imgError ? (
-                        <Image
-                            src={coverArt}
-                            alt={album.title}
-                            fill
-                            className="object-cover transition-transform duration-700 group-hover:scale-105"
-                            priority
-                            onError={() => setImgError(true)}
-                        />
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center text-zinc-800 bg-zinc-900">
-                            <Disc size={80} />
-                        </div>
-                    )}
+            {/* Header — cover art + album info */}
+            <div className="relative z-10 flex flex-col md:flex-row gap-6 md:gap-10 mb-10 md:items-end">
+
+                {/* Cover art */}
+                <div className="relative flex-shrink-0 mx-auto md:mx-0">
+                    <div className="relative w-44 h-44 sm:w-56 sm:h-56 md:w-64 md:h-64 lg:w-72 lg:h-72 rounded-2xl overflow-hidden bg-zinc-900 group">
+                        {/* Colored shadow beneath the art */}
+                        {coverArt && !imgError && (
+                            <div
+                                className="absolute -inset-2 -z-10 rounded-3xl opacity-50 blur-2xl"
+                                style={{
+                                    backgroundImage: `url(${coverArt})`,
+                                    backgroundSize: "cover",
+                                    backgroundPosition: "center",
+                                }}
+                            />
+                        )}
+                        {coverArt && !imgError ? (
+                            <Image
+                                src={coverArt}
+                                alt={album.title}
+                                fill
+                                className="object-cover transition-transform duration-700 group-hover:scale-[1.03]"
+                                priority
+                                onError={() => setImgError(true)}
+                            />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center text-zinc-700 bg-zinc-900/80">
+                                <Disc size={72} strokeWidth={1} />
+                            </div>
+                        )}
+                        {/* Subtle inner shadow / gloss overlay */}
+                        <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-2xl pointer-events-none" />
+                    </div>
                 </div>
 
-                {/* Album Info */}
+                {/* Album metadata + actions */}
                 <div className="flex flex-col justify-end text-center md:text-left flex-1 min-w-0">
-                    <p className="text-sm font-bold uppercase tracking-widest text-primary mb-2">Album</p>
-                    <h1 className="text-2xl sm:text-3xl md:text-5xl lg:text-6xl font-black text-white mb-2 tracking-tight leading-tight break-words">{localAlbum.title}</h1>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 justify-center md:justify-start text-base text-zinc-300 mb-6">
-                        <span className="font-medium text-white">{localAlbum.artist}</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 hidden sm:block" />
-                        <span className="text-zinc-400">{new Date((album as any).createdAt || album.created_at).getFullYear() || new Date().getFullYear()}</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 hidden sm:block" />
-                        <span className="text-zinc-400">{tracks.length} tracks</span>
+                    {/* Type label */}
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#f4d35e]/70 mb-3">
+                        Album
+                    </p>
+
+                    {/* Title */}
+                    <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white tracking-tight leading-[1.05] break-words mb-4">
+                        {localAlbum.title}
+                    </h1>
+
+                    {/* Artist / Year / Track count */}
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 justify-center md:justify-start mb-8">
+                        <span className="text-base font-semibold text-white/90">{localAlbum.artist}</span>
+                        <span className="text-zinc-600 select-none">·</span>
+                        <span className="text-sm text-zinc-400">
+                            {new Date((album as any).createdAt || album.created_at).getFullYear() || new Date().getFullYear()}
+                        </span>
+                        <span className="text-zinc-600 select-none">·</span>
+                        <span className="text-sm text-zinc-400">{tracks.length} {tracks.length === 1 ? 'song' : 'songs'}</span>
                     </div>
 
-                    <div className="flex items-center gap-2 sm:gap-3 justify-center md:justify-start flex-wrap">
-                        {/* Play Album - Primary CTA */}
+                    {/* Action bar */}
+                    <div className="flex items-center gap-3 justify-center md:justify-start flex-wrap">
+
+                        {/* Play — primary CTA */}
                         <button
                             onClick={handlePlayAll}
-                            className="flex items-center gap-2 px-5 sm:px-7 py-2.5 sm:py-3.5 bg-[#f4d35e] text-[#0d1b2a] font-bold rounded-full hover:bg-[#f4d35e]/90 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-[#f4d35e]/20 text-sm tracking-wide min-h-[44px]"
+                            className="flex items-center gap-2.5 pl-5 pr-6 py-3 bg-[#f4d35e] text-[#0d1b2a] font-bold rounded-full hover:bg-[#f4d35e]/90 active:scale-95 transition-all shadow-lg shadow-[#f4d35e]/25 text-sm tracking-wide min-h-[44px]"
                         >
-                            <Play size={18} fill="currentColor" />
-                            Play Album
+                            <Play size={16} fill="currentColor" strokeWidth={0} />
+                            Play
                         </button>
 
-                        {/* Fetch Cover Art — only shown when album has no cover */}
-                        {!coverArt && (
-                            <button
-                                onClick={handleFetchCoverArt}
-                                disabled={isFetchingCover}
-                                className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
-                                title="Fetch cover art from MusicBrainz"
-                            >
-                                {isFetchingCover ? (
-                                    <>
-                                        <div className="w-4 h-4 border-2 border-zinc-400 border-t-transparent rounded-full animate-spin" />
-                                        <span className="hidden sm:inline">Fetching...</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <ImagePlus size={16} />
-                                        <span className="hidden sm:inline">Fetch Cover Art</span>
-                                    </>
-                                )}
-                            </button>
-                        )}
-
-                        {/* Shuffle */}
-                        <button onClick={handleShuffle} className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium min-h-[44px]">
-                            <Shuffle size={16} />
+                        {/* Shuffle — secondary pill */}
+                        <button
+                            onClick={handleShuffle}
+                            className="flex items-center gap-2 px-4 py-3 rounded-full bg-white/[0.07] hover:bg-white/[0.12] text-zinc-300 hover:text-white border border-white/[0.08] hover:border-white/[0.15] transition-all text-sm font-medium min-h-[44px]"
+                            title="Shuffle"
+                        >
+                            <Shuffle size={15} />
                             <span className="hidden sm:inline">Shuffle</span>
                         </button>
 
-                        {/* Add to Playlist */}
+                        {/* Add to playlist */}
                         <div className="relative" ref={menuRef}>
                             <button
                                 onClick={() => setShowPlaylistMenu(v => !v)}
-                                className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium min-h-[44px]"
+                                className="flex items-center gap-2 px-4 py-3 rounded-full bg-white/[0.07] hover:bg-white/[0.12] text-zinc-300 hover:text-white border border-white/[0.08] hover:border-white/[0.15] transition-all text-sm font-medium min-h-[44px]"
                                 title="Add album to playlist"
                             >
-                                <ListPlus size={16} />
+                                <ListPlus size={15} />
                                 <span className="hidden sm:inline">Add to Playlist</span>
                             </button>
                             {showPlaylistMenu && (
-                                <div className="absolute top-full right-0 mt-2 w-56 max-h-60 overflow-y-auto bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50">
-                                    <div className="sticky top-0 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-zinc-500 border-b border-white/5 bg-zinc-900/95 backdrop-blur-sm">Add to playlist</div>
+                                <div className="absolute top-full left-0 mt-2 w-60 max-h-64 overflow-y-auto bg-zinc-950/95 backdrop-blur-xl border border-white/[0.08] rounded-2xl shadow-2xl z-50 py-1.5">
+                                    <p className="px-4 pt-1.5 pb-2.5 text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
+                                        Add to playlist
+                                    </p>
                                     {playlists.filter(p => !p.is_smart).length === 0 ? (
                                         <p className="px-4 py-3 text-sm text-zinc-500">No manual playlists.</p>
                                     ) : (
@@ -297,9 +340,11 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                                             <button
                                                 key={pl.id}
                                                 onClick={() => handleAddToPlaylist(pl.id, pl.name)}
-                                                className="w-full text-left px-4 py-3 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2.5 min-h-[44px]"
+                                                className="w-full text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/[0.08] hover:text-white transition-colors flex items-center gap-3 min-h-[40px] group/item"
                                             >
-                                                <ListPlus size={14} className="text-zinc-500 flex-shrink-0" />
+                                                <div className="w-5 h-5 rounded-md bg-white/5 border border-white/10 flex-shrink-0 flex items-center justify-center">
+                                                    <Check size={10} className="text-[#f4d35e] opacity-0 group-hover/item:opacity-100 transition-opacity" />
+                                                </div>
                                                 <span className="truncate">{pl.name}</span>
                                             </button>
                                         ))
@@ -308,29 +353,53 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                             )}
                         </div>
 
+                        {/* Divider */}
+                        <div className="w-px h-5 bg-white/10 hidden sm:block" />
+
+                        {/* Fetch cover art — only when no cover */}
+                        {!coverArt && (
+                            <button
+                                onClick={handleFetchCoverArt}
+                                disabled={isFetchingCover}
+                                className="flex items-center justify-center w-10 h-10 rounded-full text-zinc-400 hover:text-white hover:bg-white/[0.08] transition-all disabled:opacity-40 disabled:cursor-not-allowed min-w-[44px] min-h-[44px]"
+                                title="Fetch cover art from MusicBrainz"
+                                aria-label="Fetch cover art"
+                            >
+                                {isFetchingCover ? (
+                                    <div className="w-4 h-4 border-[1.5px] border-zinc-400 border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                    <ImagePlus size={18} />
+                                )}
+                            </button>
+                        )}
+
                         {/* Like */}
-                        <button className="p-2.5 sm:p-3.5 rounded-full bg-white/5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 border border-white/10 hover:border-red-500/20 transition-all min-w-[44px] min-h-[44px] flex items-center justify-center" title="Like" aria-label="Like album">
+                        <button
+                            className="flex items-center justify-center w-10 h-10 rounded-full text-zinc-400 hover:text-red-400 hover:bg-red-500/10 transition-all min-w-[44px] min-h-[44px]"
+                            title="Like"
+                            aria-label="Like album"
+                        >
                             <Heart size={18} />
                         </button>
 
-                        {/* More options dropdown */}
+                        {/* More options */}
                         <div className="relative" ref={moreMenuRef}>
                             <button
                                 onClick={() => setShowMoreMenu(v => !v)}
-                                className="p-2.5 sm:p-3.5 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white border border-white/10 hover:border-white/20 transition-all min-w-[44px] min-h-[44px] flex items-center justify-center"
+                                className="flex items-center justify-center w-10 h-10 rounded-full text-zinc-400 hover:text-white hover:bg-white/[0.08] transition-all min-w-[44px] min-h-[44px]"
                                 title="More options"
                                 aria-label="More options"
                             >
                                 <MoreHorizontal size={18} />
                             </button>
                             {showMoreMenu && (
-                                <div className="absolute top-full right-0 mt-2 w-44 bg-zinc-900/95 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                                <div className="absolute top-full right-0 mt-2 w-48 bg-zinc-950/95 backdrop-blur-xl border border-white/[0.08] rounded-2xl shadow-2xl z-50 py-1.5 overflow-hidden">
                                     {isLocalImport ? (
                                         <button
                                             onClick={() => { setShowMoreMenu(false); setShowEditModal(true); }}
-                                            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors"
+                                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/[0.08] hover:text-white transition-colors min-h-[40px]"
                                         >
-                                            <Pencil size={14} className="text-zinc-500" />
+                                            <Pencil size={14} className="text-zinc-500 flex-shrink-0" />
                                             Edit Album
                                         </button>
                                     ) : (
@@ -340,38 +409,22 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                             )}
                         </div>
                     </div>
-
-                    {/* Toast — playlist added */}
-                    {addedToast && (
-                        <div className="flex items-center gap-2 mt-3 text-sm text-[#f4d35e] animate-in fade-in slide-in-from-bottom-2 duration-300">
-                            <Check size={14} />
-                            {addedToast}
-                        </div>
-                    )}
-
-                    {/* Toast — cover art fetch result */}
-                    {coverFetchMessage && (
-                        <div className="flex items-center gap-2 mt-3 text-sm text-zinc-400 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                            <ImagePlus size={14} />
-                            {coverFetchMessage}
-                        </div>
-                    )}
                 </div>
             </div>
 
-            {/* Tracks List */}
-            <div className="flex-1">
-                {/* Table Header */}
-                <div className="grid grid-cols-[auto_1fr_auto] gap-3 px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-white/5 mb-2">
-                    <div className="w-8 text-center">#</div>
+            {/* Track list */}
+            <div className="relative z-10 flex-1">
+                {/* Column header */}
+                <div className="grid grid-cols-[2.5rem_1fr_auto] gap-4 px-3 pb-2 mb-1 text-[11px] font-semibold uppercase tracking-widest text-zinc-500 border-b border-white/[0.05]">
+                    <div className="text-center">#</div>
                     <div>Title</div>
-                    <div className="flex items-center justify-end gap-2">
-                        <Clock size={14} />
+                    <div className="flex items-center justify-end pr-1">
+                        <Clock size={13} />
                     </div>
                 </div>
 
-                <div className="space-y-1">
-                    {tracks.map((track, index) => {
+                <div className="mt-1">
+                    {tracks.map((track) => {
                         const isCurrent = isCurrentTrack(track);
                         const isPlayingCurrent = isCurrent && isPlaying;
 
@@ -379,57 +432,72 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                             <div
                                 key={track.id}
                                 onClick={() => handlePlayTrack(track)}
-                                className={`group grid grid-cols-[auto_1fr_auto] gap-4 items-center px-4 py-3.5 rounded-xl cursor-pointer transition-all border relative overflow-hidden min-h-[56px] ${isCurrent
-                                    ? 'bg-[#f4d35e]/[0.08] border-[#f4d35e]/15 shadow-sm'
-                                    : 'border-transparent hover:bg-white/5 hover:border-white/8 active:bg-white/5'
-                                    }`}
+                                role="row"
+                                tabIndex={0}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handlePlayTrack(track); } }}
+                                className={`group grid grid-cols-[2.5rem_1fr_auto] gap-4 items-center px-3 py-3 rounded-xl cursor-pointer transition-colors duration-100 min-h-[60px] relative ${
+                                    isCurrent
+                                        ? 'bg-[#f4d35e]/[0.07]'
+                                        : 'hover:bg-white/[0.05] active:bg-white/[0.04]'
+                                }`}
                             >
-                                {isCurrent && <div className="absolute left-0 top-1/4 bottom-1/4 w-0.5 bg-[#f4d35e] rounded-full" />}
-                                {/* Track Number / Play Icon */}
-                                <div className="w-8 flex items-center justify-center text-sm font-medium">
+                                {/* Active track left accent bar */}
+                                {isCurrent && (
+                                    <div className="absolute left-0 inset-y-3 w-[3px] bg-[#f4d35e] rounded-full" />
+                                )}
+
+                                {/* Track number / playback indicator */}
+                                <div className="w-10 flex items-center justify-center">
                                     {isPlayingCurrent ? (
-                                        <div className="flex items-end gap-1 h-3">
-                                            <span className="w-0.5 h-full bg-primary animate-[music-bar_0.5s_ease-in-out_infinite]" />
-                                            <span className="w-0.5 h-2/3 bg-primary animate-[music-bar_0.5s_ease-in-out_infinite_0.1s]" />
-                                            <span className="w-0.5 h-full bg-primary animate-[music-bar_0.5s_ease-in-out_infinite_0.2s]" />
+                                        <div className="flex items-end gap-[3px] h-3.5">
+                                            <span className="w-[3px] h-full bg-[#f4d35e] rounded-full animate-[music-bar_0.5s_ease-in-out_infinite]" />
+                                            <span className="w-[3px] h-2/3 bg-[#f4d35e] rounded-full animate-[music-bar_0.5s_ease-in-out_infinite_0.1s]" />
+                                            <span className="w-[3px] h-full bg-[#f4d35e] rounded-full animate-[music-bar_0.5s_ease-in-out_infinite_0.2s]" />
                                         </div>
                                     ) : isCurrent ? (
-                                        <span className="text-primary">
-                                            <Pause size={16} fill="currentColor" />
-                                        </span>
+                                        <Pause size={15} fill="currentColor" strokeWidth={0} className="text-[#f4d35e]" />
                                     ) : (
                                         <>
-                                            <span className="text-zinc-500 group-hover:hidden">{track.track_number}</span>
-                                            <span className="hidden group-hover:block text-white">
-                                                <Play size={16} fill="currentColor" />
+                                            <span className="text-sm text-zinc-500 tabular-nums group-hover:hidden">
+                                                {track.track_number}
                                             </span>
+                                            <Play
+                                                size={15}
+                                                fill="currentColor"
+                                                strokeWidth={0}
+                                                className="hidden group-hover:block text-white"
+                                            />
                                         </>
                                     )}
                                 </div>
 
-                                {/* Track Info */}
-                                <div className="min-w-0 flex flex-col justify-center">
-                                    <p className={`text-base font-medium truncate transition-colors ${isCurrent ? 'text-primary' : 'text-zinc-200 group-hover:text-white'}`}>
+                                {/* Track title + artist */}
+                                <div className="min-w-0">
+                                    <p className={`text-sm font-medium truncate leading-snug transition-colors ${
+                                        isCurrent ? 'text-[#f4d35e]' : 'text-zinc-100 group-hover:text-white'
+                                    }`}>
                                         {track.title}
                                     </p>
-                                    <p className="text-sm text-zinc-500 truncate group-hover:text-zinc-400">
+                                    <p className="text-xs text-zinc-500 truncate mt-0.5 group-hover:text-zinc-400 transition-colors">
                                         {localAlbum.artist}
                                     </p>
                                 </div>
 
                                 {/* Duration + delete */}
-                                <div className="flex items-center gap-2">
-                                    <span className={`text-sm font-medium font-mono ${isCurrent ? 'text-white' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
+                                <div className="flex items-center gap-1.5 pr-1">
+                                    <span className={`text-xs tabular-nums font-medium transition-colors ${
+                                        isCurrent ? 'text-[#f4d35e]/80' : 'text-zinc-500 group-hover:text-zinc-400'
+                                    }`}>
                                         {track.duration || '--:--'}
                                     </span>
                                     {isLocalImport && (
                                         <button
                                             onClick={e => handleDeleteTrack(e, track)}
-                                            className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-2 rounded-lg text-zinc-600 hover:text-red-400 active:text-red-400 transition-all min-w-[36px] min-h-[36px] flex items-center justify-center"
+                                            className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 flex items-center justify-center w-7 h-7 rounded-lg text-zinc-600 hover:text-red-400 active:text-red-400 hover:bg-red-500/10 transition-all min-w-[36px] min-h-[36px]"
                                             title="Remove track"
                                             aria-label={`Remove ${track.title}`}
                                         >
-                                            <Trash2 size={14} />
+                                            <Trash2 size={13} />
                                         </button>
                                     )}
                                 </div>
@@ -437,6 +505,9 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                         );
                     })}
                 </div>
+
+                {/* Bottom spacer so last track isn't flush against player bar */}
+                <div className="h-6" />
             </div>
         </div>
         </>
