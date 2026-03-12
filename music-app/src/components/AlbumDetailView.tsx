@@ -181,14 +181,18 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
         <div className="relative flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Background Blur Effect */}
             {coverArt && (
-                <div className="absolute inset-x-0 top-0 h-[500px] overflow-hidden z-0 opacity-25 pointer-events-none">
-                    <Image
-                        src={coverArt}
-                        alt=""
-                        fill
-                        className="object-cover blur-[100px]"
+                <div className="absolute inset-x-0 top-0 h-[70vh] z-0 pointer-events-none">
+                    <div
+                        className="absolute inset-0 opacity-35"
+                        style={{
+                            backgroundImage: `url(${coverArt})`,
+                            backgroundSize: "cover",
+                            backgroundPosition: "center",
+                            filter: "blur(60px)",
+                            transform: "scale(1.3)",
+                        }}
                     />
-                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/80 to-background" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-background/60 to-background" />
                 </div>
             )}
 

@@ -16,7 +16,7 @@ import {
   ChevronLeft,
   Zap,
 } from "lucide-react";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useImport } from "@/context/ImportContext";
 import { usePlayer } from "@/context/PlayerContext";
@@ -78,6 +78,11 @@ function buildFlatTracks(albums: Album[]): FlatTrack[] {
       },
     }));
   });
+}
+
+/** Returns true only for http/https URLs — local paths and localfile:// won't load in the browser */
+function isWebUrl(url: string | undefined): url is string {
+  return !!url && (url.startsWith("http://") || url.startsWith("https://"));
 }
 
 function formatDuration(raw: string | undefined): string {
@@ -179,6 +184,15 @@ export default function LibraryPage() {
   // Tab state
   const [activeTab, setActiveTab] = useState<TabId>("albums");
   const [searchQuery, setSearchQuery] = useState("");
+  // Debounced value used for filtering — avoids recomputing on every keystroke
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedQuery(searchQuery), 200);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [searchQuery]);
 
   // Albums tab state
   const [sortMode, setSortMode] = useState<SortMode>("recently_added");
@@ -283,8 +297,8 @@ export default function LibraryPage() {
   // Albums tab: sort + filter
   const sortedFilteredAlbums = useMemo(() => {
     let result = [...albums];
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+    if (debouncedQuery.trim()) {
+      const q = debouncedQuery.toLowerCase();
       result = result.filter(
         (a) =>
           a.title?.toLowerCase().includes(q) ||
@@ -306,7 +320,7 @@ export default function LibraryPage() {
         break;
     }
     return result;
-  }, [albums, searchQuery, sortMode]);
+  }, [albums, debouncedQuery, sortMode]);
 
   const albumsArtistGroups = useMemo<Map<string, Album[]>>(() => {
     if (sortMode !== "artist") return new Map();
@@ -331,7 +345,7 @@ export default function LibraryPage() {
       .map(([name, artistAlbums]) => {
         const coverArts = artistAlbums
           .map((a) => (a as any).coverArt || a.cover_art)
-          .filter(Boolean) as string[];
+          .filter(isWebUrl) as string[];
         const trackCount = artistAlbums.reduce(
           (sum, a) => sum + (a.tracks?.length ?? 0),
           0
@@ -342,31 +356,31 @@ export default function LibraryPage() {
   }, [albums]);
 
   const filteredArtists = useMemo(() => {
-    if (!searchQuery.trim()) return allArtists;
-    const q = searchQuery.toLowerCase();
+    if (!debouncedQuery.trim()) return allArtists;
+    const q = debouncedQuery.toLowerCase();
     return allArtists.filter((a) => a.name.toLowerCase().includes(q));
-  }, [allArtists, searchQuery]);
+  }, [allArtists, debouncedQuery]);
 
   // Songs tab: flat track list
   const allTracks = useMemo<FlatTrack[]>(() => buildFlatTracks(albums), [albums]);
 
   const filteredTracks = useMemo(() => {
-    if (!searchQuery.trim()) return allTracks;
-    const q = searchQuery.toLowerCase();
+    if (!debouncedQuery.trim()) return allTracks;
+    const q = debouncedQuery.toLowerCase();
     return allTracks.filter(
       (t) =>
         t.title.toLowerCase().includes(q) ||
         t.albumInfo.artist.toLowerCase().includes(q) ||
         t.albumInfo.title.toLowerCase().includes(q)
     );
-  }, [allTracks, searchQuery]);
+  }, [allTracks, debouncedQuery]);
 
   // Playlists tab
   const filteredPlaylists = useMemo(() => {
-    if (!searchQuery.trim()) return playlists;
-    const q = searchQuery.toLowerCase();
+    if (!debouncedQuery.trim()) return playlists;
+    const q = debouncedQuery.toLowerCase();
     return playlists.filter((p) => p.name.toLowerCase().includes(q));
-  }, [playlists, searchQuery]);
+  }, [playlists, debouncedQuery]);
 
   // ─── Tab badge counts ──────────────────────────────────────────────────────
 
@@ -1051,13 +1065,10 @@ export default function LibraryPage() {
                         <div className="space-y-0.5">
                           {filteredTracks.map((track, idx) => {
                             const isActive = !!currentTrack && currentTrack.audio_file === track.audio_file;
-                            const coverArt = track.albumInfo.coverArt;
+                            const coverArt = isWebUrl(track.albumInfo.coverArt) ? track.albumInfo.coverArt : undefined;
                             return (
-                              <motion.button
+                              <button
                                 key={`${track.audio_file}-${idx}`}
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                transition={{ delay: Math.min(idx * 0.01, 0.3) }}
                                 onClick={() =>
                                   playTrack(
                                     track as unknown as Track,
@@ -1074,18 +1085,18 @@ export default function LibraryPage() {
                               >
                                 {/* Cover art thumbnail with play/equalizer overlay */}
                                 <div className="relative w-10 h-10 flex-shrink-0 rounded-lg overflow-hidden bg-white/5 border border-white/8">
-                                  {coverArt ? (
-                                    <Image
+                                  {/* Placeholder always behind the img */}
+                                  <div className="absolute inset-0 flex items-center justify-center text-zinc-700">
+                                    <Music size={16} />
+                                  </div>
+                                  {coverArt && (
+                                    <img
                                       src={coverArt}
                                       alt=""
-                                      width={40}
-                                      height={40}
-                                      className="w-full h-full object-cover"
+                                      className="absolute inset-0 w-full h-full object-cover"
+                                      loading="lazy"
+                                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                                     />
-                                  ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-zinc-700">
-                                      <Music size={16} />
-                                    </div>
                                   )}
                                   {/* Overlay: play icon on hover, equalizer when active */}
                                   <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${
@@ -1126,7 +1137,7 @@ export default function LibraryPage() {
                                 <span className="text-xs text-zinc-600 text-right hidden sm:block tabular-nums">
                                   {formatDuration(track.duration)}
                                 </span>
-                              </motion.button>
+                              </button>
                             );
                           })}
                         </div>

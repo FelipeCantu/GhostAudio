@@ -86,45 +86,66 @@ export default function PlayerBar() {
   }, [showQueue]);
 
   // Fetch the "Medium" CD image from Cover Art Archive when track changes.
-  // Uses an AbortController (3 s timeout) and an in-component Map cache so
-  // the same MBID is never re-fetched and stale responses are ignored.
+  // If the cover art URL is from CoverArtArchive, extract the MBID directly.
+  // Otherwise, fall back to a MusicBrainz search by artist + album title.
   useEffect(() => {
     setCdArtUrl(null);
     setDiscImgError(false);
-    const art = currentAlbum?.coverArt;
-    if (!art) return;
-    const mbid = art.match(/coverartarchive\.org\/release\/([0-9a-f-]{36})/i)?.[1];
-    if (!mbid) return;
-
-    // Serve from cache if available (null means "already fetched, no Medium art")
-    if (cdArtCache.current.has(mbid)) {
-      setCdArtUrl(cdArtCache.current.get(mbid) ?? null);
-      return;
-    }
+    if (!currentAlbum) return;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-    fetch(`https://coverartarchive.org/release/${mbid}`, { signal: controller.signal })
-      .then((r) => r.json())
-      .then((data) => {
-        const medium = (data.images as Array<{ types: string[]; image: string }> | undefined)?.find(
-          (img) => Array.isArray(img.types) && img.types.includes("Medium")
-        );
-        const url = medium?.image ?? null;
-        cdArtCache.current.set(mbid, url);
-        setCdArtUrl(url);
-      })
-      .catch(() => {
+    const fetchMediumArt = async (mbid: string) => {
+      const cached = cdArtCache.current.get(mbid);
+      if (cached !== undefined) { setCdArtUrl(cached); return; }
+      const r = await fetch(`https://coverartarchive.org/release/${mbid}`, { signal: controller.signal });
+      const data = await r.json();
+      const medium = (data.images as Array<{ types: string[]; image: string }> | undefined)
+        ?.find((img) => Array.isArray(img.types) && img.types.includes("Medium"));
+      const url = medium?.image ?? null;
+      cdArtCache.current.set(mbid, url);
+      setCdArtUrl(url);
+    };
+
+    const run = async () => {
+      try {
+        const art = currentAlbum.coverArt;
+        // Path 1: MBID embedded in a CoverArtArchive URL
+        const mbidInUrl = art?.match(/coverartarchive\.org\/release\/([0-9a-f-]{36})/i)?.[1];
+        if (mbidInUrl) { await fetchMediumArt(mbidInUrl); return; }
+
+        // Path 2: cover art from R2 or another source — search MusicBrainz
+        const artist = currentAlbum.artist;
+        const title = currentAlbum.title;
+        if (!artist || !title) return;
+        const searchKey = `mb::${artist}::${title}`;
+        let mbid = cdArtCache.current.get(searchKey);
+        if (mbid === undefined) {
+          const q = `release:${encodeURIComponent(title)}+AND+artist:${encodeURIComponent(artist)}`;
+          const r = await fetch(
+            `https://musicbrainz.org/ws/2/release/?query=${q}&fmt=json&limit=1`,
+            { signal: controller.signal, headers: { "User-Agent": "GhostApp/1.0 (ghost.app)" } }
+          );
+          const data = await r.json();
+          mbid = (data.releases?.[0]?.id as string | undefined) ?? null;
+          cdArtCache.current.set(searchKey, mbid);
+        }
+        if (mbid) await fetchMediumArt(mbid);
+      } catch {
         // AbortError (timeout) or network failure — silently ignore
-      })
-      .finally(() => clearTimeout(timeoutId));
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    run();
 
     return () => {
       controller.abort();
       clearTimeout(timeoutId);
     };
-  }, [currentAlbum?.coverArt]);
+  }, [currentAlbum?.coverArt, currentAlbum?.artist, currentAlbum?.title]);
 
   // Hide player on landing page or if no track loaded
   if (!currentTrack || pathname === "/") return null;

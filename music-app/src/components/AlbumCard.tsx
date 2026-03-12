@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { Disc, Play, Trash2, ListPlus, Check } from "lucide-react";
+import { Disc, Play, Trash2, ListPlus, Check, MoreHorizontal } from "lucide-react";
 import { Album, PlaylistItem } from "@/services/api";
 import { usePlaylist } from "@/context/PlaylistContext";
 
@@ -16,23 +16,24 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
   const { playlists, addItemsToPlaylist } = usePlaylist();
   const [imgError, setImgError] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [showPlaylistMenu, setShowPlaylistMenu] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [addedFlash, setAddedFlash] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Handle both MongoDB (_id/coverArt) and Django (id/cover_art) formats
   const albumId = (album as any)._id || album.id;
   const coverArt = (album as any).coverArt || album.cover_art;
 
+  // Close menu on outside click
   useEffect(() => {
+    if (!showMenu) return;
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowPlaylistMenu(false);
+        setShowMenu(false);
       }
     };
-    if (showPlaylistMenu) document.addEventListener("mousedown", handler);
+    document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [showPlaylistMenu]);
+  }, [showMenu]);
 
   const buildPlaylistItems = (): PlaylistItem[] => {
     const tracks = (album.tracks || []) as any[];
@@ -50,20 +51,16 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
 
   const handleAddToPlaylist = async (e: React.MouseEvent, playlistId: string) => {
     e.stopPropagation();
-    setShowPlaylistMenu(false);
+    setShowMenu(false);
     const items = buildPlaylistItems();
     await addItemsToPlaylist(playlistId, items);
     setAddedFlash(true);
     setTimeout(() => setAddedFlash(false), 1500);
   };
 
-  const handlePlay = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onClick?.();
-  };
-
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    setShowMenu(false);
     setShowConfirm(true);
   };
 
@@ -79,10 +76,8 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
   };
 
   return (
-    <div
-      onClick={onClick}
-      className="group relative bg-white/4 border border-white/5 rounded-2xl p-3 md:p-4 hover:bg-white/8 hover:border-white/10 transition-all duration-200 cursor-pointer"
-    >
+    <div className="group relative bg-white/4 border border-white/5 rounded-2xl p-3 md:p-4 hover:bg-white/8 hover:border-white/10 transition-all duration-200">
+
       {/* Delete Confirmation Overlay */}
       {showConfirm && (
         <div className="absolute inset-0 z-20 bg-black/85 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center p-4 gap-4">
@@ -106,62 +101,11 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
         </div>
       )}
 
-      {/* Action Buttons — always visible on touch devices, hover-only on desktop */}
-      <div className="absolute top-1 right-1 z-10 flex gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-200">
-        {/* Add to Playlist */}
-        <div className="relative" ref={menuRef}>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowPlaylistMenu((v) => !v);
-            }}
-            className={`p-2 rounded-xl bg-black/70 hover:bg-black/90 transition-all min-w-[44px] min-h-[44px] flex items-center justify-center ${
-              addedFlash ? "text-[#f4d35e]" : "text-zinc-300 hover:text-[#f4d35e]"
-            }`}
-            title="Add to playlist"
-            aria-label="Add album to playlist"
-          >
-            {addedFlash ? <Check size={15} /> : <ListPlus size={15} />}
-          </button>
-
-          {showPlaylistMenu && (
-            <div className="absolute top-full right-0 mt-1.5 w-52 bg-[#0d1b2a] border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden">
-              <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-white/5">
-                Add to playlist
-              </div>
-              {playlists.filter((p) => !p.is_smart).length === 0 ? (
-                <p className="px-3 py-3 text-xs text-zinc-500 italic">No manual playlists.</p>
-              ) : (
-                playlists
-                  .filter((p) => !p.is_smart)
-                  .map((pl) => (
-                    <button
-                      key={pl.id}
-                      onClick={(e) => handleAddToPlaylist(e, pl.id)}
-                      className="w-full text-left px-3 py-2.5 text-sm text-zinc-300 hover:bg-white/8 hover:text-white transition-colors truncate min-h-[40px]"
-                    >
-                      {pl.name}
-                    </button>
-                  ))
-              )}
-            </div>
-          )}
-        </div>
-
-        {onDelete && (
-          <button
-            onClick={handleDeleteClick}
-            className="p-2 rounded-xl bg-black/70 text-zinc-300 hover:text-red-400 hover:bg-black/90 transition-all min-w-[44px] min-h-[44px] flex items-center justify-center"
-            title="Delete album"
-            aria-label="Delete album"
-          >
-            <Trash2 size={15} />
-          </button>
-        )}
-      </div>
-
-      {/* Cover Art */}
-      <div className="relative aspect-square w-full rounded-xl overflow-hidden mb-3 bg-black/40 shadow-md">
+      {/* Cover Art — tappable to open album */}
+      <div
+        onClick={onClick}
+        className="relative aspect-square w-full rounded-xl overflow-hidden mb-3 bg-black/40 shadow-md cursor-pointer"
+      >
         {coverArt && !imgError ? (
           <Image
             src={coverArt}
@@ -177,24 +121,89 @@ export default function AlbumCard({ album, onDelete, onClick }: AlbumCardProps) 
           </div>
         )}
 
-        {/* Play Overlay — shown on hover (desktop) or tap (mobile via active state) */}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 active:opacity-100 transition-opacity duration-200 flex items-center justify-center">
-          <button
-            onClick={handlePlay}
-            className="w-12 h-12 rounded-full bg-[#f4d35e] text-[#0d3b66] flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-transform duration-200 min-w-[44px] min-h-[44px]"
-            aria-label={`Play ${album.title}`}
-          >
+        {/* Play overlay — desktop hover only */}
+        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none sm:pointer-events-auto">
+          <div className="w-12 h-12 rounded-full bg-[#f4d35e] text-[#0d3b66] flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-transform duration-200">
             <Play size={22} fill="currentColor" className="ml-0.5" />
-          </button>
+          </div>
         </div>
       </div>
 
-      {/* Info */}
-      <div className="space-y-0.5">
-        <h3 className="font-semibold text-white truncate text-sm leading-tight">
-          {album.title}
-        </h3>
-        <p className="text-xs text-zinc-400 truncate">{album.artist}</p>
+      {/* Info row — title, artist, and ••• menu */}
+      <div className="flex items-start gap-1">
+        {/* Text — tappable to open album */}
+        <div
+          onClick={onClick}
+          className="flex-1 min-w-0 cursor-pointer space-y-0.5"
+        >
+          <h3 className={`font-semibold text-white truncate text-sm leading-tight ${addedFlash ? "text-[#f4d35e]" : ""}`}>
+            {addedFlash ? <><Check size={11} className="inline mr-1 mb-0.5" />Added</> : album.title}
+          </h3>
+          <p className="text-xs text-zinc-400 truncate">{album.artist}</p>
+        </div>
+
+        {/* ••• context menu button */}
+        <div className="relative flex-shrink-0" ref={menuRef}>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowMenu((v) => !v);
+            }}
+            className="p-1.5 rounded-lg text-zinc-600 hover:text-zinc-300 hover:bg-white/8 transition-all min-w-[32px] min-h-[32px] flex items-center justify-center"
+            aria-label="More options"
+          >
+            <MoreHorizontal size={16} />
+          </button>
+
+          {showMenu && (
+            <div className="absolute bottom-full right-0 mb-1.5 w-48 bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden">
+              {/* Play */}
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowMenu(false); onClick?.(); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-sm text-zinc-200 hover:bg-white/8 hover:text-white transition-colors"
+              >
+                <Play size={14} fill="currentColor" className="text-zinc-400" />
+                Play Album
+              </button>
+
+              {/* Add to Playlist */}
+              {playlists.filter((p) => !p.is_smart).length > 0 && (
+                <div className="border-t border-white/5">
+                  <p className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
+                    Add to playlist
+                  </p>
+                  <div className="max-h-36 overflow-y-auto">
+                    {playlists
+                      .filter((p) => !p.is_smart)
+                      .map((pl) => (
+                        <button
+                          key={pl.id}
+                          onClick={(e) => handleAddToPlaylist(e, pl.id)}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/8 hover:text-white transition-colors"
+                        >
+                          <ListPlus size={13} className="text-zinc-500 flex-shrink-0" />
+                          <span className="truncate">{pl.name}</span>
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Delete */}
+              {onDelete && (
+                <div className="border-t border-white/5">
+                  <button
+                    onClick={handleDeleteClick}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                    Delete Album
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
