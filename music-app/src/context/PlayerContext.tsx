@@ -254,6 +254,95 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         nextTrackFromRefsRef.current = nextTrackFromRefs;
     }, [nextTrackFromRefs]);
 
+    // ─── Media Session API (lock screen / notification controls) ─────────────────
+
+    // Update metadata whenever the track or album changes
+    useEffect(() => {
+        if (!("mediaSession" in navigator)) return;
+        if (!currentTrack) return;
+
+        const artwork: MediaImage[] = [];
+        if (currentAlbum?.coverArt) {
+            artwork.push({ src: currentAlbum.coverArt, sizes: "512x512", type: "image/jpeg" });
+        }
+
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: currentTrack.title,
+            artist: currentAlbum?.artist ?? "",
+            album: currentAlbum?.title ?? "",
+            artwork,
+        });
+    }, [currentTrack, currentAlbum]);
+
+    // Sync playback state with the OS
+    useEffect(() => {
+        if (!("mediaSession" in navigator)) return;
+        navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+    }, [isPlaying]);
+
+    // Update position state so the lock screen scrubber is accurate
+    useEffect(() => {
+        if (!("mediaSession" in navigator)) return;
+        if (!duration || !isFinite(duration) || duration <= 0) return;
+        try {
+            navigator.mediaSession.setPositionState({
+                duration,
+                playbackRate: 1,
+                position: Math.min(progress, duration),
+            });
+        } catch {
+            // setPositionState may throw if duration/position are invalid
+        }
+    }, [progress, duration]);
+
+    // Register action handlers once on mount; read state through refs to avoid stale closures
+    useEffect(() => {
+        if (!("mediaSession" in navigator)) return;
+
+        navigator.mediaSession.setActionHandler("play", () => {
+            audioRef.current?.play().catch(() => {});
+            setIsPlaying(true);
+        });
+        navigator.mediaSession.setActionHandler("pause", () => {
+            audioRef.current?.pause();
+            setIsPlaying(false);
+        });
+        navigator.mediaSession.setActionHandler("nexttrack", () => {
+            nextTrackFromRefsRef.current();
+        });
+        navigator.mediaSession.setActionHandler("previoustrack", () => {
+            // If more than 3 s in, restart; otherwise go to previous
+            if (audioRef.current && audioRef.current.currentTime > 3) {
+                audioRef.current.currentTime = 0;
+            } else {
+                const track = currentTrackRef.current;
+                const q = queueRef.current;
+                const album = currentAlbumRef.current;
+                if (!track || q.length === 0) return;
+                const idx = q.findIndex(t => t.audio_file === track.audio_file);
+                if (idx > 0) {
+                    const prev = q[idx - 1];
+                    playTrackInternal(prev, resolveAlbum(prev, album), q);
+                }
+            }
+        });
+        navigator.mediaSession.setActionHandler("seekto", (details) => {
+            if (details.seekTime !== undefined && audioRef.current) {
+                audioRef.current.currentTime = details.seekTime;
+                setProgress(details.seekTime);
+            }
+        });
+
+        return () => {
+            (["play", "pause", "nexttrack", "previoustrack", "seekto"] as MediaSessionAction[]).forEach(
+                (action) => {
+                    try { navigator.mediaSession.setActionHandler(action, null); } catch { /* ignore */ }
+                }
+            );
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [playTrackInternal]);
+
     // ─── Audio element setup ──────────────────────────────────────────────────────
 
     useEffect(() => {
