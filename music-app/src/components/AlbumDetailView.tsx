@@ -201,7 +201,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
         <div className="relative flex flex-col h-full animate-in fade-in duration-300">
 
             {/* Backdrop — full bleed color wash from cover art */}
-            <div className="fixed inset-x-0 top-0 h-[55vh] min-h-[340px] z-0 pointer-events-none overflow-hidden">
+            <div className="absolute top-0 h-[55vh] min-h-[340px] z-0 pointer-events-none overflow-hidden" style={{ left: '50%', transform: 'translateX(-50vw)', width: '100vw' }}>
                 {coverArt ? (
                     <>
                         <div
