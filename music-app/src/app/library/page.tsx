@@ -11,19 +11,27 @@ import {
   LayoutGrid,
   List,
   Play,
+  UserRound,
+  Music,
+  ChevronLeft,
+  Zap,
 } from "lucide-react";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useImport } from "@/context/ImportContext";
 import { usePlayer } from "@/context/PlayerContext";
+import { usePlaylist } from "@/context/PlaylistContext";
 import { api, Album, Track } from "@/services/api";
 import AlbumCard from "@/components/AlbumCard";
 import AlbumDetailView from "@/components/AlbumDetailView";
 import Link from "next/link";
 import Image from "next/image";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type SortMode = "recently_added" | "a_z" | "z_a" | "artist";
 type ViewMode = "grid" | "list";
+type TabId = "playlists" | "artists" | "albums" | "songs";
 
 const SORT_OPTIONS: { key: SortMode; label: string }[] = [
   { key: "recently_added", label: "Recently Added" },
@@ -36,6 +44,15 @@ interface FlatTrack extends Track {
   albumInfo: { title: string; artist: string; coverArt?: string };
 }
 
+interface ArtistEntry {
+  name: string;
+  albums: Album[];
+  coverArts: string[];
+  trackCount: number;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function fisherYates<T>(arr: T[]): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -45,17 +62,132 @@ function fisherYates<T>(arr: T[]): T[] {
   return a;
 }
 
+function buildFlatTracks(albums: Album[]): FlatTrack[] {
+  return albums.flatMap((a) => {
+    const coverArt = (a as any).coverArt || a.cover_art;
+    return (a.tracks || []).map((t: any, idx: number): FlatTrack => ({
+      id: t.id ?? idx + 1,
+      title: t.title || `Track ${idx + 1}`,
+      track_number: t.trackNumber || t.track_number || idx + 1,
+      audio_file: t.audioFile || t.audio_file || "",
+      duration: t.duration || "",
+      albumInfo: {
+        title: a.title,
+        artist: a.artist,
+        coverArt: coverArt ?? undefined,
+      },
+    }));
+  });
+}
+
+function formatDuration(raw: string | undefined): string {
+  if (!raw) return "";
+  // Already formatted as m:ss
+  if (raw.includes(":")) return raw;
+  const secs = parseFloat(raw);
+  if (isNaN(secs)) return "";
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+interface CoverMosaicProps {
+  images: string[];
+  size?: number;
+  placeholderIcon: React.ReactNode;
+  className?: string;
+}
+
+function CoverMosaic({ images, size = 48, placeholderIcon, className = "" }: CoverMosaicProps) {
+  const slots = images.slice(0, 4);
+  const isEmpty = slots.length === 0;
+
+  if (isEmpty) {
+    return (
+      <div
+        className={`flex-shrink-0 rounded-xl overflow-hidden bg-white/5 border border-white/8 flex items-center justify-center text-zinc-600 ${className}`}
+        style={{ width: size, height: size }}
+      >
+        {placeholderIcon}
+      </div>
+    );
+  }
+
+  if (slots.length === 1) {
+    return (
+      <div
+        className={`flex-shrink-0 rounded-xl overflow-hidden bg-black/40 border border-white/8 ${className}`}
+        style={{ width: size, height: size }}
+      >
+        <Image
+          src={slots[0]}
+          alt=""
+          width={size}
+          height={size}
+          className="w-full h-full object-cover"
+        />
+      </div>
+    );
+  }
+
+  // 2×2 mosaic
+  const filled = [...slots];
+  while (filled.length < 4) filled.push("");
+
+  return (
+    <div
+      className={`flex-shrink-0 rounded-xl overflow-hidden border border-white/8 grid grid-cols-2 ${className}`}
+      style={{ width: size, height: size }}
+    >
+      {filled.map((src, i) =>
+        src ? (
+          <Image
+            key={i}
+            src={src}
+            alt=""
+            width={size / 2}
+            height={size / 2}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div key={i} className="w-full h-full bg-white/5 flex items-center justify-center text-zinc-700">
+            <Disc size={10} />
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export default function LibraryPage() {
   const { token, user } = useAuth();
   const { importStatus } = useImport();
-  const { playTrack } = usePlayer();
+  const { playTrack, currentTrack } = usePlayer();
+  const { playlists } = usePlaylist();
+
+  // Albums state
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<TabId>("albums");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Albums tab state
   const [sortMode, setSortMode] = useState<SortMode>("recently_added");
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
+
+  // Artists tab state
+  const [selectedArtist, setSelectedArtist] = useState<ArtistEntry | null>(null);
+
+  // ─── Data loading ─────────────────────────────────────────────────────────
 
   const loadAlbums = useCallback(async () => {
     if (!token) return;
@@ -79,36 +211,42 @@ export default function LibraryPage() {
     }
   }, [importStatus, loadAlbums]);
 
-  // Open album from global search (sessionStorage) or custom event
+  // Open album from global search (sessionStorage)
   useEffect(() => {
     const tryOpenPending = (albumList: Album[]) => {
       const pending = sessionStorage.getItem("pendingAlbumOpen");
       if (!pending) return;
       sessionStorage.removeItem("pendingAlbumOpen");
       const match = albumList.find((a: any) => (a._id || String(a.id)) === pending);
-      if (match) setSelectedAlbum(match);
+      if (match) {
+        setActiveTab("albums");
+        setSelectedAlbum(match);
+      }
     };
-
     if (albums.length > 0) tryOpenPending(albums);
   }, [albums]);
 
+  // Open album from custom event
   useEffect(() => {
     const handler = (e: Event) => {
       const albumId = (e as CustomEvent).detail?.albumId;
       if (!albumId) return;
       const match = albums.find((a: any) => (a._id || String(a.id)) === albumId);
-      if (match) setSelectedAlbum(match);
+      if (match) {
+        setActiveTab("albums");
+        setSelectedAlbum(match);
+      }
     };
     window.addEventListener("openAlbum", handler);
     return () => window.removeEventListener("openAlbum", handler);
   }, [albums]);
 
+  // ─── Handlers ─────────────────────────────────────────────────────────────
+
   const handleDeleteAlbum = async (albumId: string) => {
     try {
       await api.library.deleteAlbum(albumId, user?.id);
-      setAlbums((prev) =>
-        prev.filter((a: any) => (a._id || a.id) !== albumId)
-      );
+      setAlbums((prev) => prev.filter((a: any) => (a._id || a.id) !== albumId));
     } catch (err) {
       console.error("Failed to delete album:", err);
     }
@@ -118,40 +256,33 @@ export default function LibraryPage() {
     setSelectedAlbum(album);
   };
 
-  // Shuffle All — flatten every track across all albums and play shuffled
-  const handleShuffleAll = () => {
-    if (albums.length === 0) return;
-
-    const flat: FlatTrack[] = albums.flatMap((a) => {
-      const coverArt = (a as any).coverArt || a.cover_art;
-      return (a.tracks || []).map((t: any, idx: number): FlatTrack => ({
-        id: t.id ?? idx + 1,
-        title: t.title || `Track ${idx + 1}`,
-        track_number: t.trackNumber || t.track_number || idx + 1,
-        audio_file: t.audioFile || t.audio_file || "",
-        duration: t.duration || "",
-        albumInfo: {
-          title: a.title,
-          artist: a.artist,
-          coverArt: coverArt ?? undefined,
-        },
-      }));
-    });
-
-    const shuffled = fisherYates(flat);
-    if (shuffled.length === 0) return;
-
-    // Strip albumInfo from Track objects for the queue (player expects Track[])
-    const queue: Track[] = shuffled.map(({ albumInfo: _ai, ...t }) => t);
-    const first = shuffled[0];
-    playTrack(queue[0], queue, first.albumInfo);
+  const handleTabChange = (tab: TabId) => {
+    setActiveTab(tab);
+    setSearchQuery("");
+    setSelectedArtist(null);
   };
 
-  // Sort + filter pipeline
+  // Shuffle All — flatten every track and play shuffled
+  const handleShuffleAll = () => {
+    if (albums.length === 0) return;
+    const flat = buildFlatTracks(albums);
+    const shuffled = fisherYates(flat);
+    if (shuffled.length === 0) return;
+    playTrack(shuffled[0] as unknown as Track, shuffled as unknown as Track[], shuffled[0].albumInfo);
+  };
+
+  const handleShuffleArtist = (artist: ArtistEntry) => {
+    const flat = buildFlatTracks(artist.albums);
+    const shuffled = fisherYates(flat);
+    if (shuffled.length === 0) return;
+    playTrack(shuffled[0] as unknown as Track, shuffled as unknown as Track[], shuffled[0].albumInfo);
+  };
+
+  // ─── Derived data ──────────────────────────────────────────────────────────
+
+  // Albums tab: sort + filter
   const sortedFilteredAlbums = useMemo(() => {
     let result = [...albums];
-
-    // Filter by search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
@@ -160,8 +291,6 @@ export default function LibraryPage() {
           a.artist?.toLowerCase().includes(q)
       );
     }
-
-    // Sort
     switch (sortMode) {
       case "a_z":
         result.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
@@ -170,21 +299,16 @@ export default function LibraryPage() {
         result.sort((a, b) => (b.title || "").localeCompare(a.title || ""));
         break;
       case "artist":
-        result.sort((a, b) =>
-          (a.artist || "").localeCompare(b.artist || "")
-        );
+        result.sort((a, b) => (a.artist || "").localeCompare(b.artist || ""));
         break;
       case "recently_added":
       default:
-        // API already returns newest first; maintain insertion order
         break;
     }
-
     return result;
   }, [albums, searchQuery, sortMode]);
 
-  // Group by artist when sort === 'artist'
-  const artistGroups = useMemo<Map<string, Album[]>>(() => {
+  const albumsArtistGroups = useMemo<Map<string, Album[]>>(() => {
     if (sortMode !== "artist") return new Map();
     const map = new Map<string, Album[]>();
     for (const album of sortedFilteredAlbums) {
@@ -195,7 +319,74 @@ export default function LibraryPage() {
     return map;
   }, [sortMode, sortedFilteredAlbums]);
 
+  // Artists tab: derive artist entries
+  const allArtists = useMemo<ArtistEntry[]>(() => {
+    const map = new Map<string, Album[]>();
+    for (const album of albums) {
+      const key = album.artist || "Unknown Artist";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(album);
+    }
+    return Array.from(map.entries())
+      .map(([name, artistAlbums]) => {
+        const coverArts = artistAlbums
+          .map((a) => (a as any).coverArt || a.cover_art)
+          .filter(Boolean) as string[];
+        const trackCount = artistAlbums.reduce(
+          (sum, a) => sum + (a.tracks?.length ?? 0),
+          0
+        );
+        return { name, albums: artistAlbums, coverArts, trackCount };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [albums]);
+
+  const filteredArtists = useMemo(() => {
+    if (!searchQuery.trim()) return allArtists;
+    const q = searchQuery.toLowerCase();
+    return allArtists.filter((a) => a.name.toLowerCase().includes(q));
+  }, [allArtists, searchQuery]);
+
+  // Songs tab: flat track list
+  const allTracks = useMemo<FlatTrack[]>(() => buildFlatTracks(albums), [albums]);
+
+  const filteredTracks = useMemo(() => {
+    if (!searchQuery.trim()) return allTracks;
+    const q = searchQuery.toLowerCase();
+    return allTracks.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.albumInfo.artist.toLowerCase().includes(q) ||
+        t.albumInfo.title.toLowerCase().includes(q)
+    );
+  }, [allTracks, searchQuery]);
+
+  // Playlists tab
+  const filteredPlaylists = useMemo(() => {
+    if (!searchQuery.trim()) return playlists;
+    const q = searchQuery.toLowerCase();
+    return playlists.filter((p) => p.name.toLowerCase().includes(q));
+  }, [playlists, searchQuery]);
+
+  // ─── Tab badge counts ──────────────────────────────────────────────────────
+
+  const tabCounts: Record<TabId, number> = {
+    playlists: playlists.length,
+    artists: allArtists.length,
+    albums: albums.length,
+    songs: allTracks.length,
+  };
+
   const sortLabel = SORT_OPTIONS.find((o) => o.key === sortMode)?.label ?? "";
+
+  const TABS: { id: TabId; label: string }[] = [
+    { id: "playlists", label: "Playlists" },
+    { id: "artists", label: "Artists" },
+    { id: "albums", label: "Albums" },
+    { id: "songs", label: "Songs" },
+  ];
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <DashboardLayout>
@@ -216,29 +407,29 @@ export default function LibraryPage() {
           </motion.div>
         ) : (
           <motion.div
-            key="grid"
+            key="library"
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -16 }}
             transition={{ duration: 0.25 }}
             className="max-w-7xl mx-auto"
           >
-            {/* Page Header */}
-            <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            {/* ── Page Header ── */}
+            <div className="mb-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <h1 className="text-2xl md:text-3xl font-bold text-foreground">
                   My Library
                 </h1>
                 <p className="text-muted-foreground text-sm mt-0.5">
                   {albums.length > 0
-                    ? `${albums.length} album${albums.length !== 1 ? "s" : ""} · sorted by ${sortLabel.toLowerCase()}`
+                    ? `${albums.length} album${albums.length !== 1 ? "s" : ""} · ${allTracks.length} song${allTracks.length !== 1 ? "s" : ""}`
                     : "Your collection in high fidelity"}
                 </p>
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0">
-                {/* View Toggle */}
-                {albums.length > 0 && (
+                {/* View toggle — Albums tab only */}
+                {activeTab === "albums" && albums.length > 0 && (
                   <div className="flex items-center bg-black/30 border border-white/8 rounded-xl p-1 gap-1">
                     <button
                       onClick={() => setViewMode("grid")}
@@ -267,8 +458,8 @@ export default function LibraryPage() {
                   </div>
                 )}
 
-                {/* Shuffle All */}
-                {albums.length > 0 && (
+                {/* Shuffle All — Albums + Songs tabs */}
+                {(activeTab === "albums" || activeTab === "songs") && albums.length > 0 && (
                   <button
                     onClick={handleShuffleAll}
                     className="flex items-center gap-2 px-4 py-2.5 bg-white/5 border border-white/8 text-zinc-300 hover:text-white hover:bg-white/10 font-semibold rounded-xl transition-colors text-sm min-h-[44px]"
@@ -290,7 +481,41 @@ export default function LibraryPage() {
               </div>
             </div>
 
-            {/* Search Bar */}
+            {/* ── Tab Bar ── */}
+            <div
+              className="flex items-center gap-1 border-b border-white/8 mb-5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+              role="tablist"
+              aria-label="Library sections"
+            >
+              {TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  role="tab"
+                  aria-selected={activeTab === tab.id}
+                  onClick={() => handleTabChange(tab.id)}
+                  className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold whitespace-nowrap border-b-2 transition-all -mb-px ${
+                    activeTab === tab.id
+                      ? "border-[#f4d35e] text-white"
+                      : "border-transparent text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  {tab.label}
+                  {tabCounts[tab.id] > 0 && (
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center leading-none ${
+                        activeTab === tab.id
+                          ? "bg-[#f4d35e]/20 text-[#f4d35e]"
+                          : "bg-white/8 text-zinc-500"
+                      }`}
+                    >
+                      {tabCounts[tab.id]}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* ── Search Bar ── */}
             {albums.length > 0 && (
               <div className="relative mb-4">
                 <Search
@@ -301,7 +526,15 @@ export default function LibraryPage() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search albums or artists..."
+                  placeholder={
+                    activeTab === "playlists"
+                      ? "Search playlists..."
+                      : activeTab === "artists"
+                      ? "Search artists..."
+                      : activeTab === "albums"
+                      ? "Search albums or artists..."
+                      : "Search songs, artists, or albums..."
+                  }
                   className="w-full bg-black/30 border border-white/8 rounded-xl pl-11 pr-10 py-3 text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-[#f4d35e]/50 focus:bg-black/50 transition-all"
                 />
                 {searchQuery && (
@@ -316,10 +549,10 @@ export default function LibraryPage() {
               </div>
             )}
 
-            {/* Sort Pills */}
-            {albums.length > 0 && (
+            {/* ── Sort Pills (Albums tab only) ── */}
+            {activeTab === "albums" && albums.length > 0 && (
               <div
-                className="flex items-center gap-2 mb-6 overflow-x-auto pb-1 scrollbar-none"
+                className="flex items-center gap-2 mb-5 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                 role="group"
                 aria-label="Sort options"
               >
@@ -340,7 +573,7 @@ export default function LibraryPage() {
               </div>
             )}
 
-            {/* Content */}
+            {/* ── Tab Content ── */}
             {loading ? (
               <div className="flex flex-col items-center justify-center py-32 gap-4">
                 <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -369,7 +602,7 @@ export default function LibraryPage() {
                 </button>
               </div>
             ) : albums.length === 0 ? (
-              /* Empty state */
+              /* Empty library state */
               <motion.div
                 initial={{ opacity: 0, scale: 0.97 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -404,149 +637,576 @@ export default function LibraryPage() {
                   Supports FLAC, WAV, MP3, AAC, and more
                 </p>
               </motion.div>
-            ) : sortedFilteredAlbums.length === 0 ? (
-              /* No search results */
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex flex-col items-center justify-center py-20 text-center"
-              >
-                <Search size={36} className="text-zinc-600 mb-4" />
-                <h3 className="text-lg font-semibold text-white mb-2">
-                  No results found
-                </h3>
-                <p className="text-zinc-500 text-sm mb-5">
-                  Nothing matching &ldquo;{searchQuery}&rdquo; in your library.
-                </p>
-                <button
-                  onClick={() => setSearchQuery("")}
-                  className="text-[#f4d35e] text-sm hover:underline"
-                >
-                  Clear search
-                </button>
-              </motion.div>
-            ) : sortMode === "artist" ? (
-              /* ── Artist Grouped View ── */
-              <div className="space-y-8">
-                {Array.from(artistGroups.entries()).map(
-                  ([artistName, artistAlbums]) => (
-                    <motion.section
-                      key={artistName}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.2 }}
-                      aria-label={artistName}
-                    >
-                      <h2 className="text-lg font-bold text-white border-b border-white/8 pb-2 mb-3">
-                        {artistName}
-                        <span className="ml-2 text-sm font-normal text-zinc-500">
-                          {artistAlbums.length} album
-                          {artistAlbums.length !== 1 ? "s" : ""}
-                        </span>
-                      </h2>
-                      <div className="flex gap-4 overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                        {artistAlbums.map((album: any) => (
-                          <div
+            ) : (
+              <AnimatePresence mode="wait">
+                {/* ════════════ PLAYLISTS TAB ════════════ */}
+                {activeTab === "playlists" && (
+                  <motion.div
+                    key="tab-playlists"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {filteredPlaylists.length === 0 ? (
+                      <EmptyTabState
+                        icon={<Disc size={32} className="text-zinc-600" />}
+                        title={searchQuery ? "No playlists found" : "No playlists yet"}
+                        subtitle={
+                          searchQuery
+                            ? `Nothing matching "${searchQuery}"`
+                            : "Create a playlist to organise your tracks."
+                        }
+                        action={
+                          searchQuery ? (
+                            <button
+                              onClick={() => setSearchQuery("")}
+                              className="text-[#f4d35e] text-sm hover:underline"
+                            >
+                              Clear search
+                            </button>
+                          ) : (
+                            <Link
+                              href="/playlists/new"
+                              className="px-5 py-2.5 bg-[#f4d35e]/10 border border-[#f4d35e]/20 text-[#f4d35e] rounded-xl text-sm font-medium hover:bg-[#f4d35e]/20 transition-colors inline-flex items-center gap-2"
+                            >
+                              <Plus size={15} />
+                              New Playlist
+                            </Link>
+                          )
+                        }
+                      />
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {filteredPlaylists.map((playlist, idx) => {
+                          const trackCount =
+                            playlist.item_count ?? playlist.items?.length ?? 0;
+                          return (
+                            <motion.div
+                              key={playlist.id}
+                              initial={{ opacity: 0, y: 12 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: Math.min(idx * 0.04, 0.4) }}
+                            >
+                              <Link
+                                href={`/playlists/${playlist.id}`}
+                                className="group block bg-white/4 border border-white/5 rounded-2xl p-3 hover:bg-white/8 hover:border-white/10 transition-all duration-200"
+                              >
+                                {/* Cover mosaic */}
+                                <div className="relative aspect-square w-full rounded-xl overflow-hidden mb-3 bg-black/40">
+                                  <PlaylistMosaic
+                                    coverArts={playlist.cover_arts ?? []}
+                                  />
+                                  {/* Smart badge overlay */}
+                                  {playlist.is_smart && (
+                                    <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#f4d35e]/90 text-[#0d3b66]">
+                                      <Zap size={10} fill="currentColor" />
+                                      <span className="text-[9px] font-black uppercase tracking-wide">
+                                        Smart
+                                      </span>
+                                    </div>
+                                  )}
+                                  {/* Play overlay */}
+                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <div className="w-12 h-12 rounded-full bg-[#f4d35e] text-[#0d3b66] flex items-center justify-center shadow-xl">
+                                      <Play size={22} fill="currentColor" className="ml-0.5" />
+                                    </div>
+                                  </div>
+                                </div>
+                                <p className="text-sm font-semibold text-white truncate group-hover:text-[#f4d35e] transition-colors">
+                                  {playlist.name}
+                                </p>
+                                <p className="text-xs text-zinc-400 mt-0.5">
+                                  {trackCount} track{trackCount !== 1 ? "s" : ""}
+                                </p>
+                              </Link>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {/* ════════════ ARTISTS TAB ════════════ */}
+                {activeTab === "artists" && (
+                  <motion.div
+                    key="tab-artists"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <AnimatePresence mode="wait">
+                      {selectedArtist ? (
+                        /* ── Artist Detail Panel ── */
+                        <motion.div
+                          key={`artist-detail-${selectedArtist.name}`}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: 20 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => setSelectedArtist(null)}
+                                className="flex items-center gap-1.5 text-zinc-400 hover:text-white transition-colors text-sm min-h-[44px] px-1"
+                                aria-label="Back to artists"
+                              >
+                                <ChevronLeft size={18} />
+                                <span>Artists</span>
+                              </button>
+                              <span className="text-zinc-600">/</span>
+                              <h2 className="text-lg font-bold text-white truncate">
+                                {selectedArtist.name}
+                              </h2>
+                            </div>
+                            <button
+                              onClick={() => handleShuffleArtist(selectedArtist)}
+                              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/8 text-zinc-300 hover:text-white hover:bg-white/10 font-semibold rounded-xl transition-colors text-sm min-h-[44px]"
+                            >
+                              <Shuffle size={15} />
+                              <span className="hidden sm:inline">Shuffle</span>
+                            </button>
+                          </div>
+
+                          <p className="text-zinc-500 text-sm mb-5">
+                            {selectedArtist.albums.length} album{selectedArtist.albums.length !== 1 ? "s" : ""}{" "}
+                            &middot; {selectedArtist.trackCount} song{selectedArtist.trackCount !== 1 ? "s" : ""}
+                          </p>
+
+                          <div className="flex gap-4 overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                            {selectedArtist.albums.map((album: any) => (
+                              <div key={album._id || album.id} className="flex-shrink-0 w-40">
+                                <AlbumCard
+                                  album={album}
+                                  onDelete={handleDeleteAlbum}
+                                  onClick={() => handleAlbumClick(album)}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </motion.div>
+                      ) : (
+                        /* ── Artist List ── */
+                        <motion.div
+                          key="artist-list"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.15 }}
+                        >
+                          {filteredArtists.length === 0 ? (
+                            <EmptyTabState
+                              icon={<UserRound size={32} className="text-zinc-600" />}
+                              title="No artists found"
+                              subtitle={`Nothing matching "${searchQuery}"`}
+                              action={
+                                <button
+                                  onClick={() => setSearchQuery("")}
+                                  className="text-[#f4d35e] text-sm hover:underline"
+                                >
+                                  Clear search
+                                </button>
+                              }
+                            />
+                          ) : (
+                            <div className="space-y-1">
+                              {filteredArtists.map((artist, idx) => (
+                                <motion.div
+                                  key={artist.name}
+                                  initial={{ opacity: 0, x: -8 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  transition={{ delay: Math.min(idx * 0.025, 0.35) }}
+                                >
+                                  <div className="flex items-center gap-4 px-3 py-2.5 rounded-xl hover:bg-white/5 border border-transparent hover:border-white/8 transition-all group">
+                                    {/* Artist collage */}
+                                    <button
+                                      onClick={() => setSelectedArtist(artist)}
+                                      className="flex items-center gap-4 flex-1 min-w-0 text-left"
+                                      aria-label={`View ${artist.name}`}
+                                    >
+                                      <CoverMosaic
+                                        images={artist.coverArts}
+                                        size={48}
+                                        placeholderIcon={<UserRound size={20} />}
+                                        className="rounded-xl"
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-semibold text-white truncate group-hover:text-[#f4d35e] transition-colors">
+                                          {artist.name}
+                                        </p>
+                                        <p className="text-xs text-zinc-400 mt-0.5">
+                                          {artist.albums.length} album{artist.albums.length !== 1 ? "s" : ""}{" "}
+                                          &middot; {artist.trackCount} song{artist.trackCount !== 1 ? "s" : ""}
+                                        </p>
+                                      </div>
+                                    </button>
+
+                                    {/* Play button */}
+                                    <button
+                                      onClick={() => handleShuffleArtist(artist)}
+                                      className="flex-shrink-0 w-9 h-9 rounded-full opacity-0 group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 bg-[#f4d35e]/10 hover:bg-[#f4d35e]/20 flex items-center justify-center transition-all min-w-[36px] min-h-[36px]"
+                                      aria-label={`Shuffle ${artist.name}`}
+                                    >
+                                      <Play
+                                        size={15}
+                                        className="text-[#f4d35e] ml-0.5"
+                                        fill="currentColor"
+                                      />
+                                    </button>
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                )}
+
+                {/* ════════════ ALBUMS TAB ════════════ */}
+                {activeTab === "albums" && (
+                  <motion.div
+                    key="tab-albums"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {sortedFilteredAlbums.length === 0 ? (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="flex flex-col items-center justify-center py-20 text-center"
+                      >
+                        <Search size={36} className="text-zinc-600 mb-4" />
+                        <h3 className="text-lg font-semibold text-white mb-2">
+                          No results found
+                        </h3>
+                        <p className="text-zinc-500 text-sm mb-5">
+                          Nothing matching &ldquo;{searchQuery}&rdquo; in your library.
+                        </p>
+                        <button
+                          onClick={() => setSearchQuery("")}
+                          className="text-[#f4d35e] text-sm hover:underline"
+                        >
+                          Clear search
+                        </button>
+                      </motion.div>
+                    ) : sortMode === "artist" ? (
+                      /* Artist-grouped album view */
+                      <div className="space-y-8">
+                        {Array.from(albumsArtistGroups.entries()).map(
+                          ([artistName, artistAlbums]) => (
+                            <motion.section
+                              key={artistName}
+                              initial={{ opacity: 0, y: 8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ duration: 0.2 }}
+                              aria-label={artistName}
+                            >
+                              <h2 className="text-lg font-bold text-white border-b border-white/8 pb-2 mb-3">
+                                {artistName}
+                                <span className="ml-2 text-sm font-normal text-zinc-500">
+                                  {artistAlbums.length} album
+                                  {artistAlbums.length !== 1 ? "s" : ""}
+                                </span>
+                              </h2>
+                              <div className="flex gap-4 overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                                {artistAlbums.map((album: any) => (
+                                  <div
+                                    key={album._id || album.id}
+                                    className="flex-shrink-0 w-40"
+                                  >
+                                    <AlbumCard
+                                      album={album}
+                                      onDelete={handleDeleteAlbum}
+                                      onClick={() => handleAlbumClick(album)}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </motion.section>
+                          )
+                        )}
+                      </div>
+                    ) : viewMode === "grid" ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+                        {sortedFilteredAlbums.map((album: any, idx: number) => (
+                          <motion.div
                             key={album._id || album.id}
-                            className="flex-shrink-0 w-40"
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: Math.min(idx * 0.04, 0.4) }}
                           >
                             <AlbumCard
                               album={album}
                               onDelete={handleDeleteAlbum}
                               onClick={() => handleAlbumClick(album)}
                             />
-                          </div>
+                          </motion.div>
                         ))}
                       </div>
-                    </motion.section>
-                  )
-                )}
-              </div>
-            ) : viewMode === "grid" ? (
-              /* ── Grid View ── */
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-                {sortedFilteredAlbums.map((album: any, idx: number) => (
-                  <motion.div
-                    key={album._id || album.id}
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: Math.min(idx * 0.04, 0.4) }}
-                  >
-                    <AlbumCard
-                      album={album}
-                      onDelete={handleDeleteAlbum}
-                      onClick={() => handleAlbumClick(album)}
-                    />
+                    ) : (
+                      /* List view */
+                      <div className="space-y-1">
+                        {sortedFilteredAlbums.map((album: any, idx: number) => {
+                          const albumId = album._id || album.id;
+                          const coverArt = album.coverArt || album.cover_art;
+                          return (
+                            <motion.div
+                              key={albumId}
+                              initial={{ opacity: 0, x: -8 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: Math.min(idx * 0.03, 0.3) }}
+                            >
+                              <button
+                                onClick={() => handleAlbumClick(album)}
+                                className="w-full flex items-center gap-4 px-4 py-2.5 rounded-xl hover:bg-white/5 border border-transparent hover:border-white/8 transition-all group text-left"
+                                aria-label={`Open ${album.title} by ${album.artist}`}
+                              >
+                                <div className="w-12 h-12 flex-shrink-0 rounded-lg overflow-hidden bg-black/40 border border-white/8">
+                                  {coverArt ? (
+                                    <Image
+                                      src={coverArt}
+                                      alt={album.title}
+                                      width={48}
+                                      height={48}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-zinc-600">
+                                      <Disc size={20} />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-semibold text-white truncate group-hover:text-[#f4d35e] transition-colors">
+                                    {album.title}
+                                  </p>
+                                  <p className="text-xs text-zinc-400 truncate">
+                                    {album.artist}
+                                  </p>
+                                </div>
+                                <span className="text-xs text-zinc-600 flex-shrink-0 hidden sm:block">
+                                  {album.tracks?.length ?? 0} tracks
+                                </span>
+                                <div className="flex-shrink-0 w-9 h-9 rounded-full bg-[#f4d35e]/0 group-hover:bg-[#f4d35e]/10 flex items-center justify-center transition-all">
+                                  <Play
+                                    size={16}
+                                    className="text-zinc-600 group-hover:text-[#f4d35e] transition-colors ml-0.5"
+                                    fill="currentColor"
+                                  />
+                                </div>
+                              </button>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </motion.div>
-                ))}
-              </div>
-            ) : (
-              /* ── List View ── */
-              <div className="space-y-1">
-                {sortedFilteredAlbums.map((album: any, idx: number) => {
-                  const albumId = album._id || album.id;
-                  const coverArt = album.coverArt || album.cover_art;
-                  return (
-                    <motion.div
-                      key={albumId}
-                      initial={{ opacity: 0, x: -8 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: Math.min(idx * 0.03, 0.3) }}
-                    >
-                      <button
-                        onClick={() => handleAlbumClick(album)}
-                        className="w-full flex items-center gap-4 px-4 py-2.5 rounded-xl hover:bg-white/5 border border-transparent hover:border-white/8 transition-all group text-left"
-                        aria-label={`Open ${album.title} by ${album.artist}`}
-                      >
-                        {/* Thumbnail */}
-                        <div className="w-12 h-12 flex-shrink-0 rounded-lg overflow-hidden bg-black/40 border border-white/8">
-                          {coverArt ? (
-                            <Image
-                              src={coverArt}
-                              alt={album.title}
-                              width={48}
-                              height={48}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-zinc-600">
-                              <Disc size={20} />
-                            </div>
-                          )}
-                        </div>
+                )}
 
-                        {/* Info */}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-white truncate group-hover:text-[#f4d35e] transition-colors">
-                            {album.title}
-                          </p>
-                          <p className="text-xs text-zinc-400 truncate">
-                            {album.artist}
-                          </p>
+                {/* ════════════ SONGS TAB ════════════ */}
+                {activeTab === "songs" && (
+                  <motion.div
+                    key="tab-songs"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {filteredTracks.length === 0 ? (
+                      <EmptyTabState
+                        icon={<Music size={32} className="text-zinc-600" />}
+                        title="No songs found"
+                        subtitle={
+                          searchQuery
+                            ? `Nothing matching "${searchQuery}"`
+                            : "Import some music to see your songs here."
+                        }
+                        action={
+                          searchQuery ? (
+                            <button
+                              onClick={() => setSearchQuery("")}
+                              className="text-[#f4d35e] text-sm hover:underline"
+                            >
+                              Clear search
+                            </button>
+                          ) : undefined
+                        }
+                      />
+                    ) : (
+                      <>
+                        {/* Column headers */}
+                        <div className="hidden sm:grid grid-cols-[2rem_1fr_1fr_1fr_4rem] gap-4 px-4 mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-600 select-none">
+                          <span className="text-center">#</span>
+                          <span>Title</span>
+                          <span>Artist</span>
+                          <span>Album</span>
+                          <span className="text-right">Time</span>
                         </div>
+                        <div className="space-y-0.5">
+                          {filteredTracks.map((track, idx) => {
+                            const trackId = String(track.id);
+                            const currentId = currentTrack ? String((currentTrack as any)._id || currentTrack.id) : null;
+                            const isActive = currentId === trackId;
+                            return (
+                              <motion.button
+                                key={`${trackId}-${idx}`}
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                transition={{ delay: Math.min(idx * 0.01, 0.3) }}
+                                onClick={() =>
+                                  playTrack(
+                                    track as unknown as Track,
+                                    filteredTracks as unknown as Track[],
+                                    track.albumInfo
+                                  )
+                                }
+                                className={`w-full grid grid-cols-[2rem_1fr] sm:grid-cols-[2rem_1fr_1fr_1fr_4rem] gap-4 items-center px-4 py-2.5 rounded-xl transition-all group text-left ${
+                                  isActive
+                                    ? "bg-[#f4d35e]/8 border border-[#f4d35e]/15"
+                                    : "hover:bg-white/5 border border-transparent hover:border-white/8"
+                                }`}
+                                aria-label={`Play ${track.title}`}
+                              >
+                                {/* Index / playing indicator */}
+                                <span className="flex items-center justify-center min-w-0">
+                                  {isActive ? (
+                                    <span className="flex gap-[3px] items-end h-4">
+                                      <span className="w-[3px] bg-[#f4d35e] rounded-full animate-[bounce_0.8s_ease-in-out_infinite]" style={{ height: "60%" }} />
+                                      <span className="w-[3px] bg-[#f4d35e] rounded-full animate-[bounce_0.8s_ease-in-out_0.15s_infinite]" style={{ height: "100%" }} />
+                                      <span className="w-[3px] bg-[#f4d35e] rounded-full animate-[bounce_0.8s_ease-in-out_0.3s_infinite]" style={{ height: "75%" }} />
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <span className="text-xs text-zinc-600 group-hover:hidden">
+                                        {idx + 1}
+                                      </span>
+                                      <Play
+                                        size={13}
+                                        className="hidden group-hover:block text-white ml-0.5"
+                                        fill="currentColor"
+                                      />
+                                    </>
+                                  )}
+                                </span>
 
-                        {/* Track count */}
-                        <span className="text-xs text-zinc-600 flex-shrink-0 hidden sm:block">
-                          {album.tracks?.length ?? 0} tracks
-                        </span>
+                                {/* Title */}
+                                <span
+                                  className={`text-sm font-medium truncate ${
+                                    isActive ? "text-[#f4d35e]" : "text-white group-hover:text-[#f4d35e] transition-colors"
+                                  }`}
+                                >
+                                  {track.title}
+                                </span>
 
-                        {/* Play Button */}
-                        <div className="flex-shrink-0 w-9 h-9 rounded-full bg-[#f4d35e]/0 group-hover:bg-[#f4d35e]/10 flex items-center justify-center transition-all">
-                          <Play
-                            size={16}
-                            className="text-zinc-600 group-hover:text-[#f4d35e] transition-colors ml-0.5"
-                            fill="currentColor"
-                          />
+                                {/* Artist */}
+                                <span className="text-sm text-zinc-400 truncate hidden sm:block">
+                                  {track.albumInfo.artist}
+                                </span>
+
+                                {/* Album */}
+                                <span className="text-sm text-zinc-500 truncate hidden sm:block">
+                                  {track.albumInfo.title}
+                                </span>
+
+                                {/* Duration */}
+                                <span className="text-xs text-zinc-600 text-right hidden sm:block tabular-nums">
+                                  {formatDuration(track.duration)}
+                                </span>
+                              </motion.button>
+                            );
+                          })}
                         </div>
-                      </button>
-                    </motion.div>
-                  );
-                })}
-              </div>
+                      </>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             )}
           </motion.div>
         )}
       </AnimatePresence>
     </DashboardLayout>
+  );
+}
+
+// ─── Playlist Mosaic ──────────────────────────────────────────────────────────
+
+function PlaylistMosaic({ coverArts }: { coverArts: string[] }) {
+  const slots = coverArts.slice(0, 4);
+
+  if (slots.length === 0) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900 text-zinc-600">
+        <Disc size={40} />
+      </div>
+    );
+  }
+
+  if (slots.length === 1) {
+    return (
+      <Image
+        src={slots[0]}
+        alt=""
+        fill
+        className="object-cover"
+        sizes="(max-width: 640px) 50vw, 25vw"
+      />
+    );
+  }
+
+  const filled = [...slots];
+  while (filled.length < 4) filled.push("");
+
+  return (
+    <div className="w-full h-full grid grid-cols-2">
+      {filled.map((src, i) =>
+        src ? (
+          <div key={i} className="relative overflow-hidden">
+            <Image
+              src={src}
+              alt=""
+              fill
+              className="object-cover"
+              sizes="(max-width: 640px) 25vw, 12vw"
+            />
+          </div>
+        ) : (
+          <div key={i} className="bg-zinc-800 flex items-center justify-center text-zinc-700">
+            <Disc size={14} />
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+// ─── Empty Tab State ──────────────────────────────────────────────────────────
+
+interface EmptyTabStateProps {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  action?: React.ReactNode;
+}
+
+function EmptyTabState({ icon, title, subtitle, action }: EmptyTabStateProps) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex flex-col items-center justify-center py-20 text-center"
+    >
+      <div className="mb-4">{icon}</div>
+      <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
+      <p className="text-zinc-500 text-sm mb-5 max-w-xs">{subtitle}</p>
+      {action}
+    </motion.div>
   );
 }

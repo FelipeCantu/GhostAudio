@@ -107,6 +107,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // once at mount) always calls the latest version without being stale.
     const nextTrackFromRefsRef = useRef<() => void>(() => {});
 
+    // Extract albumInfo embedded on a track (e.g. from handleShuffleAll),
+    // falling back to the provided default.
+    function resolveAlbum(track: Track, fallback: AlbumInfo | null): AlbumInfo | null {
+        const embedded = (track as unknown as Record<string, unknown>).albumInfo;
+        return (embedded as AlbumInfo | undefined) ?? fallback;
+    }
+
     // Keep refs in sync with state
     useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
     useEffect(() => { currentAlbumRef.current = currentAlbum; }, [currentAlbum]);
@@ -223,17 +230,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (shuffleModeRef.current && q.length > 1) {
             const others = q.filter(t => t.audio_file !== track.audio_file);
             const next = others[Math.floor(Math.random() * others.length)];
-            playTrackInternal(next, album, q);
+            playTrackInternal(next, resolveAlbum(next, album), q);
             return;
         }
 
         const currentIndex = q.findIndex(t => t.audio_file === track.audio_file);
 
         if (currentIndex < q.length - 1) {
-            playTrackInternal(q[currentIndex + 1], album, q);
+            const next = q[currentIndex + 1];
+            playTrackInternal(next, resolveAlbum(next, album), q);
         } else if (repeatModeRef.current === "all") {
             // Loop back to start
-            playTrackInternal(q[0], album, q);
+            playTrackInternal(q[0], resolveAlbum(q[0], album), q);
         } else {
             // End of queue, stop
             setIsPlaying(false);
@@ -393,7 +401,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const playTrack = (track: Track, newQueue?: Track[], albumInfo?: AlbumInfo) => {
         console.log("[Player] playTrack called with:", track);
         const resolvedQueue = newQueue ?? queueRef.current;
-        const resolvedAlbum = albumInfo ?? currentAlbumRef.current;
+        const resolvedAlbum = albumInfo ?? resolveAlbum(track, currentAlbumRef.current);
         playTrackInternal(track, resolvedAlbum, resolvedQueue);
     };
 
@@ -449,16 +457,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (shuffleModeRef.current && q.length > 1) {
             const others = q.filter(t => t.audio_file !== track.audio_file);
             const prev = others[Math.floor(Math.random() * others.length)];
-            playTrackInternal(prev, album, q);
+            playTrackInternal(prev, resolveAlbum(prev, album), q);
             return;
         }
 
         const currentIndex = q.findIndex(t => t.audio_file === track.audio_file);
         if (currentIndex > 0) {
-            playTrackInternal(q[currentIndex - 1], album, q);
+            const prev = q[currentIndex - 1];
+            playTrackInternal(prev, resolveAlbum(prev, album), q);
         } else if (repeatModeRef.current === "all") {
             // Wrap to end
-            playTrackInternal(q[q.length - 1], album, q);
+            const last = q[q.length - 1];
+            playTrackInternal(last, resolveAlbum(last, album), q);
         }
     };
 
