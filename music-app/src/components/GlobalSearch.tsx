@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, X, Disc } from "lucide-react";
 import Image from "next/image";
+import { useRouter, usePathname } from "next/navigation";
 import { Album } from "@/services/api";
 
 interface GlobalSearchProps {
@@ -15,6 +16,8 @@ interface GlobalSearchProps {
 }
 
 export default function GlobalSearch({ albums, onOpenShortcuts, forceOpen, onForceOpenConsumed }: GlobalSearchProps) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -73,6 +76,18 @@ export default function GlobalSearch({ albums, onOpenShortcuts, forceOpen, onFor
     setSelectedIndex(0);
   }, []);
 
+  const openAlbum = useCallback((album: Album) => {
+    const albumId = (album as any)._id || String(album.id);
+    sessionStorage.setItem("pendingAlbumOpen", albumId);
+    close();
+    if (pathname !== "/library") {
+      router.push("/library");
+    } else {
+      // Already on library — dispatch a custom event so the page picks it up
+      window.dispatchEvent(new CustomEvent("openAlbum", { detail: { albumId } }));
+    }
+  }, [close, pathname, router]);
+
   const results = query.trim().length === 0
     ? []
     : albums
@@ -94,9 +109,7 @@ export default function GlobalSearch({ albums, onOpenShortcuts, forceOpen, onFor
       setSelectedIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
       if (results[selectedIndex]) {
-        // Navigate to library — close the overlay
-        // (Cross-page state setting is not possible here; close is sufficient)
-        close();
+        openAlbum(results[selectedIndex]);
       }
     } else if (e.key === "Escape") {
       close();
@@ -194,7 +207,7 @@ export default function GlobalSearch({ albums, onOpenShortcuts, forceOpen, onFor
                           id={`search-result-${idx}`}
                           role="option"
                           aria-selected={isSelected}
-                          onClick={close}
+                          onClick={() => openAlbum(album)}
                           onMouseEnter={() => setSelectedIndex(idx)}
                           className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
                             isSelected ? "bg-[#f4d35e]/8" : "hover:bg-white/5"

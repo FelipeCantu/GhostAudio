@@ -102,6 +102,12 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
         }
     };
 
+    const handleShuffle = () => {
+        if (tracks.length === 0) return;
+        const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+        playTrack(shuffled[0], shuffled, albumInfo);
+    };
+
     const isCurrentTrack = (track: Track) => {
         return currentTrack?.audio_file === track.audio_file;
     };
@@ -175,7 +181,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
         <div className="relative flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Background Blur Effect */}
             {coverArt && (
-                <div className="fixed inset-x-0 top-0 h-[500px] overflow-hidden z-[1] opacity-25 pointer-events-none">
+                <div className="absolute inset-x-0 top-0 h-[500px] overflow-hidden z-0 opacity-25 pointer-events-none">
                     <Image
                         src={coverArt}
                         alt=""
@@ -262,7 +268,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
                         )}
 
                         {/* Shuffle */}
-                        <button className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium min-h-[44px]">
+                        <button onClick={handleShuffle} className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-full border border-white/10 hover:border-white/20 transition-all text-sm font-medium min-h-[44px]">
                             <Shuffle size={16} />
                             <span className="hidden sm:inline">Shuffle</span>
                         </button>

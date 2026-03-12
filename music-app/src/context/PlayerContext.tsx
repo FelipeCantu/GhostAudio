@@ -153,6 +153,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (!audioFile) {
             console.error("[Player] ERROR: No audio file on track!", track);
+            setError("This track has no audio file.");
+            setIsLoading(false);
+            setIsPlaying(false);
             return;
         }
 

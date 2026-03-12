@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { usePlayer } from "@/context/PlayerContext";
 import Link from "next/link";
 import Image from "next/image";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -11,6 +12,7 @@ import { motion } from "framer-motion";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { currentTrack } = usePlayer();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -41,7 +43,7 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-[#0d1b2a] text-[#faf0ca] px-4">
+    <div className={`relative min-h-screen w-full flex flex-col items-center justify-end overflow-hidden bg-[#0d1b2a] text-[#faf0ca] px-4 transition-[padding-bottom] duration-300 ease-out ${currentTrack ? 'pb-36 lg:pb-24' : 'pb-8'}`}>
       {/* Ambient glow */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-[-15%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-[#f4d35e]/6 blur-[120px]" />

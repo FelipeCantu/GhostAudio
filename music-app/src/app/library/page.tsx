@@ -79,6 +79,30 @@ export default function LibraryPage() {
     }
   }, [importStatus, loadAlbums]);
 
+  // Open album from global search (sessionStorage) or custom event
+  useEffect(() => {
+    const tryOpenPending = (albumList: Album[]) => {
+      const pending = sessionStorage.getItem("pendingAlbumOpen");
+      if (!pending) return;
+      sessionStorage.removeItem("pendingAlbumOpen");
+      const match = albumList.find((a: any) => (a._id || String(a.id)) === pending);
+      if (match) setSelectedAlbum(match);
+    };
+
+    if (albums.length > 0) tryOpenPending(albums);
+  }, [albums]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const albumId = (e as CustomEvent).detail?.albumId;
+      if (!albumId) return;
+      const match = albums.find((a: any) => (a._id || String(a.id)) === albumId);
+      if (match) setSelectedAlbum(match);
+    };
+    window.addEventListener("openAlbum", handler);
+    return () => window.removeEventListener("openAlbum", handler);
+  }, [albums]);
+
   const handleDeleteAlbum = async (albumId: string) => {
     try {
       await api.library.deleteAlbum(albumId, user?.id);
