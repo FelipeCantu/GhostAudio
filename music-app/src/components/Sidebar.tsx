@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/context/AuthContext";
 import { usePlaylist } from "@/context/PlaylistContext";
+import { usePlayer } from "@/context/PlayerContext";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
@@ -48,6 +49,7 @@ interface DesktopSidebarContentProps {
   logout: ReturnType<typeof useAuth>["logout"];
   playlists: ReturnType<typeof usePlaylist>["playlists"];
   pathname: string;
+  hasPlayer: boolean;
 }
 
 function DesktopSidebarContent({
@@ -57,6 +59,7 @@ function DesktopSidebarContent({
   logout,
   playlists,
   pathname,
+  hasPlayer,
 }: DesktopSidebarContentProps) {
   const isActive = (path: string) => pathname === path;
 
@@ -68,10 +71,10 @@ function DesktopSidebarContent({
         "h-screen w-64 flex flex-col fixed left-0 top-0 z-50",
         "bg-black/90 lg:bg-black/60 backdrop-blur-2xl",
         "border-r border-white/8 shadow-2xl",
-        "transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
+        "transition-[transform,padding] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
         "lg:translate-x-0",
         isOpen ? "translate-x-0" : "-translate-x-full",
-        "pb-20",
+        hasPlayer ? "pb-20" : "pb-4",
       ].join(" ")}
       aria-label="Sidebar navigation"
     >
@@ -525,6 +528,7 @@ function MobileBottomSheet({
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { user, logout } = useAuth();
   const { playlists } = usePlaylist();
+  const { currentTrack } = usePlayer();
   const pathname = usePathname();
 
   const sharedProps = {
@@ -541,6 +545,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         <DesktopSidebarContent
           isOpen={isOpen}
           onClose={onClose}
+          hasPlayer={!!currentTrack}
           {...sharedProps}
         />
       </div>

@@ -372,6 +372,11 @@ export default function PlayerBar() {
                       : "[&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5",
                     "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white",
                     "[&::-webkit-slider-thumb]:shadow-xl [&::-webkit-slider-thumb]:transition-all",
+                    // Center thumb: -(thumbH − trackH) / 2
+                    // normal: -(20 − 6) / 2 = −7px | scrubbing: -(24 − 8) / 2 = −8px
+                    scrubbing
+                      ? "[&::-webkit-slider-thumb]:-mt-[8px]"
+                      : "[&::-webkit-slider-thumb]:-mt-[7px]",
                     "[&::-moz-range-thumb]:border-0",
                     scrubbing
                       ? "[&::-moz-range-thumb]:w-6 [&::-moz-range-thumb]:h-6"
