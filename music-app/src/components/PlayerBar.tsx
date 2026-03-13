@@ -64,6 +64,7 @@ export default function PlayerBar() {
   const [cdArtUrl, setCdArtUrl] = useState<string | null>(null);
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
+  const [barHovered, setBarHovered] = useState(false);
   const pathname = usePathname();
 
   // In-component cache so the same MBID is never re-fetched across track changes
@@ -573,7 +574,11 @@ export default function PlayerBar() {
           ].join(" ")}
         >
           {/* Desktop progress bar — native range input, click or drag to seek */}
-          <div className="hidden md:block relative group">
+          <div
+            className="hidden md:block relative"
+            onMouseEnter={() => setBarHovered(true)}
+            onMouseLeave={() => setBarHovered(false)}
+          >
             <input
               type="range"
               min={0}
@@ -585,23 +590,30 @@ export default function PlayerBar() {
               aria-label="Track progress"
               className={[
                 "w-full appearance-none cursor-pointer bg-transparent outline-none",
-                "transition-all duration-100",
-                scrubbing ? "h-2" : "h-1 hover:h-2",
+                "transition-[height] duration-100",
+                // Track height grows on hover/scrub
+                scrubbing || barHovered ? "h-2" : "h-1",
                 // Track
                 "[&::-webkit-slider-runnable-track]:rounded-full",
                 "[&::-webkit-slider-runnable-track]:h-full",
                 "[&::-moz-range-track]:rounded-full",
                 "[&::-moz-range-track]:h-full",
-                // Thumb — hidden until hover/scrubbing
+                // Thumb
                 "[&::-webkit-slider-thumb]:appearance-none",
                 "[&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3",
                 "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white",
                 "[&::-webkit-slider-thumb]:shadow-lg",
-                // Center thumb: offset = -(thumb 12px - track height) / 2
-                // track h-1 (4px) → -4px, track h-2 (8px) → -2px
+                // Center thumb: -(thumbH 12px − trackH) / 2
+                // track h-1 (4px) → -4px | track h-2 (8px) → -2px
+                scrubbing || barHovered
+                  ? "[&::-webkit-slider-thumb]:-mt-[2px]"
+                  : "[&::-webkit-slider-thumb]:-mt-[4px]",
+                // Visibility
                 scrubbing
-                  ? "[&::-webkit-slider-thumb]:-mt-[2px] [&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:scale-125"
-                  : "[&::-webkit-slider-thumb]:-mt-[4px] group-hover:[&::-webkit-slider-thumb]:-mt-[2px] group-hover:[&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:opacity-0",
+                  ? "[&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:scale-125"
+                  : barHovered
+                  ? "[&::-webkit-slider-thumb]:opacity-100"
+                  : "[&::-webkit-slider-thumb]:opacity-0",
                 "[&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:h-3",
                 "[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white",
               ].join(" ")}

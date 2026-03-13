@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
@@ -19,8 +19,10 @@ import {
   GripVertical,
   Settings2,
   Check,
+  Play,
+  Loader2,
 } from "lucide-react";
-import { api } from "@/services/api";
+import { api, type Album } from "@/services/api";
 import {
   DndContext,
   closestCenter,
@@ -131,6 +133,10 @@ export default function Home() {
   const { recentlyPlayed, playTrack } = usePlayer();
   const router = useRouter();
 
+  // Cached full album list (loaded lazily on first play attempt)
+  const albumsCacheRef = useRef<Album[] | null>(null);
+  const [loadingAlbumId, setLoadingAlbumId] = useState<string | null>(null);
+
   const [stats, setStats] = useState<DashboardStats>({
     total_albums: 0,
     total_tracks: 0,
@@ -204,6 +210,31 @@ export default function Home() {
       });
     }
   }, []);
+
+  const handlePlayAlbum = useCallback(async (
+    albumId: string,
+    albumTitle: string,
+    albumArtist: string,
+    coverArt?: string,
+  ) => {
+    if (!token) return;
+    setLoadingAlbumId(albumId);
+    try {
+      if (!albumsCacheRef.current) {
+        albumsCacheRef.current = await api.library.getAlbums(token, user?.id);
+      }
+      const album = albumsCacheRef.current.find(
+        (a) => String((a as any)._id ?? a.id) === albumId || String(a.id) === albumId
+      );
+      if (!album || album.tracks.length === 0) return;
+      const albumInfo = { title: albumTitle, artist: albumArtist, coverArt };
+      playTrack(album.tracks[0], album.tracks, albumInfo);
+    } catch (err) {
+      console.error("[Dashboard] Failed to load album for playback:", err);
+    } finally {
+      setLoadingAlbumId(null);
+    }
+  }, [token, user?.id, playTrack]);
 
   if (isLoading) {
     return (
@@ -391,13 +422,18 @@ export default function Home() {
           <div className="space-y-2">
             {stats.recent_albums.map((album, i) => {
               const cover = album.coverArt || album.cover_art;
+              const albumId = album._id || album.id;
+              const isLoading = loadingAlbumId === albumId;
               return (
-                <motion.div
-                  key={album._id || album.id}
+                <motion.button
+                  key={albumId}
                   initial={{ opacity: 0, x: -12 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.35 + i * 0.05 }}
-                  className="flex items-center gap-3 p-3 hover:bg-white/6 rounded-xl transition-colors group cursor-pointer min-h-[56px]"
+                  onClick={() => handlePlayAlbum(albumId, album.title, album.artist, cover)}
+                  disabled={isLoading}
+                  className="w-full flex items-center gap-3 p-3 hover:bg-white/6 rounded-xl transition-colors group cursor-pointer min-h-[56px] text-left"
+                  aria-label={`Play ${album.title}`}
                 >
                   <div className="w-11 h-11 bg-black/40 rounded-lg overflow-hidden relative flex-shrink-0 border border-white/5">
                     {cover ? (
@@ -407,6 +443,13 @@ export default function Home() {
                         <Disc size={20} />
                       </div>
                     )}
+                    {/* Play overlay */}
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      {isLoading
+                        ? <Loader2 size={16} className="text-white animate-spin" />
+                        : <Play size={16} className="text-white fill-white" />
+                      }
+                    </div>
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-white truncate text-sm group-hover:text-[#f4d35e] transition-colors">
@@ -414,7 +457,8 @@ export default function Home() {
                     </p>
                     <p className="text-xs text-zinc-500 truncate">{album.artist}</p>
                   </div>
-                </motion.div>
+                  <Play size={14} className="text-zinc-600 group-hover:text-[#f4d35e] transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100" />
+                </motion.button>
               );
             })}
           </div>
