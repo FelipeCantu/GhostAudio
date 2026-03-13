@@ -114,6 +114,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // True while a track-switch is in progress — suppresses spurious abort/pause
     // events that the browser fires when the src is changed mid-playback.
     const isTransitioningRef = useRef(false);
+    // Fade helpers
+    const fadeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const volumeRef = useRef(volume);        // always tracks latest user volume
+    const pendingFadeInRef = useRef(false);  // signals handlePlaying to fade in
 
     // Extract albumInfo embedded on a track (e.g. from handleShuffleAll),
     // falling back to the provided default.
@@ -128,6 +132,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => { queueRef.current = queue; }, [queue]);
     useEffect(() => { shuffleModeRef.current = shuffleMode; }, [shuffleMode]);
     useEffect(() => { repeatModeRef.current = repeatMode; }, [repeatMode]);
+    useEffect(() => { volumeRef.current = volume; }, [volume]);
 
     // Load persisted data on mount (SSR-safe)
     useEffect(() => {
@@ -174,10 +179,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             return;
         }
 
-        if (!skipAddToRecent) {
-            addToRecentlyPlayed(track, albumInfo);
+        const audio = audioRef.current;
+        if (!audio) return;
+
+        // Resolve src before any async operation
+        let src = audioFile;
+        const isLocalPath = src && !src.startsWith("http") && !src.startsWith("localfile://") && !src.startsWith("file://");
+        const isElectron = typeof window !== "undefined" && (window as unknown as Record<string, unknown>).electronAPI !== undefined;
+        if (isLocalPath) {
+            if (!isElectron) {
+                setError("This track is stored locally and can only be played in the Desktop App.");
+                setIsPlaying(false);
+                setIsLoading(false);
+                return;
+            }
+            src = `localfile://${src.replace(/\\/g, "/")}`;
         }
 
+        // Update UI state immediately so the new track info appears right away
+        if (!skipAddToRecent) addToRecentlyPlayed(track, albumInfo);
         setCurrentTrack(track);
         currentTrackRef.current = track;
         setCurrentAlbum(albumInfo);
@@ -190,30 +210,46 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setProgress(0);
         setDuration(0);
 
-        if (audioRef.current) {
-            let src = audioFile;
-            const isLocalPath = src && !src.startsWith("http") && !src.startsWith("localfile://") && !src.startsWith("file://");
-            const isElectron = typeof window !== "undefined" && (window as unknown as Record<string, unknown>).electronAPI !== undefined;
-            if (isLocalPath) {
-                if (!isElectron) {
-                    setError("This track is stored locally and can only be played in the Desktop App.");
-                    setIsPlaying(false);
-                    setIsLoading(false);
-                    return;
-                }
-                src = `localfile://${src.replace(/\\/g, "/")}`;
-            }
-            console.log("[Player] Playing src:", src);
+        // Cancel any in-progress fade
+        if (fadeTimerRef.current !== null) {
+            clearInterval(fadeTimerRef.current);
+            fadeTimerRef.current = null;
+        }
+
+        console.log("[Player] Playing src:", src);
+
+        const startAudio = () => {
+            pendingFadeInRef.current = true;
             isTransitioningRef.current = true;
-            audioRef.current.volume = volume;
-            audioRef.current.src = src;
-            audioRef.current.load();
-            audioRef.current.play().catch(e => {
+            audio.volume = 0; // silent start; handlePlaying will fade in
+            audio.src = src;
+            audio.play().catch(e => {
                 isTransitioningRef.current = false;
+                pendingFadeInRef.current = false;
+                audio.volume = volumeRef.current;
                 if (e.name !== "AbortError") console.error("[Player] Playback failed:", e);
             });
+        };
+
+        // If audio is currently playing, fade it out first then switch
+        if (!audio.paused && audio.currentSrc) {
+            const startVol = audio.volume;
+            const FADE_MS = 250;
+            const STEPS = Math.max(1, Math.round(FADE_MS / 16));
+            let step = 0;
+            fadeTimerRef.current = setInterval(() => {
+                step++;
+                audio.volume = Math.max(0, startVol * (1 - step / STEPS));
+                if (step >= STEPS) {
+                    clearInterval(fadeTimerRef.current!);
+                    fadeTimerRef.current = null;
+                    startAudio();
+                }
+            }, FADE_MS / STEPS);
+        } else {
+            startAudio();
         }
-    }, [addToRecentlyPlayed, volume]);
+    }, [addToRecentlyPlayed]);
 
     // ─── nextTrack (ref-safe, used inside ended handler) ─────────────────────────
 
@@ -415,6 +451,26 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             setIsLoading(false);
             setError(null);
             setIsPlaying(true);
+            // Fade in if a new track just started
+            if (pendingFadeInRef.current) {
+                pendingFadeInRef.current = false;
+                const FADE_MS = 400;
+                const STEPS = Math.max(1, Math.round(FADE_MS / 16));
+                let step = 0;
+                const fadeIn = setInterval(() => {
+                    step++;
+                    const target = volumeRef.current;
+                    if (audioRef.current) {
+                        audioRef.current.volume = target * Math.min(1, step / STEPS);
+                    }
+                    if (step >= STEPS) {
+                        if (audioRef.current) audioRef.current.volume = volumeRef.current;
+                        clearInterval(fadeIn);
+                        fadeTimerRef.current = null;
+                    }
+                }, FADE_MS / STEPS);
+                fadeTimerRef.current = fadeIn;
+            }
         };
         // Sync isPlaying if the browser/OS pauses audio externally
         // (e.g. another tab steals audio focus, headphones disconnect, mobile lock screen)
@@ -504,6 +560,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const setVolume = (v: number) => {
         const clamped = Math.max(0, Math.min(1, v));
         setVolumeState(clamped);
+        volumeRef.current = clamped;
         saveToStorage(VOLUME_KEY, clamped);
         if (audioRef.current) {
             audioRef.current.volume = clamped;

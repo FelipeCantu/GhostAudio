@@ -597,10 +597,11 @@ export default function PlayerBar() {
                 "[&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3",
                 "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white",
                 "[&::-webkit-slider-thumb]:shadow-lg",
-                "[&::-webkit-slider-thumb]:-mt-[4px]",
+                // Center thumb: offset = -(thumb 12px - track height) / 2
+                // track h-1 (4px) → -4px, track h-2 (8px) → -2px
                 scrubbing
-                  ? "[&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:scale-125"
-                  : "group-hover:[&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:opacity-0",
+                  ? "[&::-webkit-slider-thumb]:-mt-[2px] [&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:scale-125"
+                  : "[&::-webkit-slider-thumb]:-mt-[4px] group-hover:[&::-webkit-slider-thumb]:-mt-[2px] group-hover:[&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:opacity-0",
                 "[&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:h-3",
                 "[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white",
               ].join(" ")}
