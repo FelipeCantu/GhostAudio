@@ -597,6 +597,7 @@ export default function PlayerBar() {
                 "[&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3",
                 "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white",
                 "[&::-webkit-slider-thumb]:shadow-lg",
+                "[&::-webkit-slider-thumb]:-mt-[4px]",
                 scrubbing
                   ? "[&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:scale-125"
                   : "group-hover:[&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:opacity-0",
