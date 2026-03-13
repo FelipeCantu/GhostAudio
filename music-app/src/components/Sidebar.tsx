@@ -66,15 +66,18 @@ function DesktopSidebarContent({
   return (
     <motion.aside
       initial={false}
-      animate={{ x: isOpen ? 0 : undefined }}
+      animate={{
+        x: isOpen ? 0 : undefined,
+        paddingBottom: hasPlayer ? 80 : 0,
+      }}
+      transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
       className={[
         "h-screen w-64 flex flex-col fixed left-0 top-0 z-50",
         "bg-black/90 lg:bg-black/60 backdrop-blur-2xl",
         "border-r border-white/8 shadow-2xl",
-        "transition-[transform,padding] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
+        "transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
         "lg:translate-x-0",
         isOpen ? "translate-x-0" : "-translate-x-full",
-        hasPlayer ? "pb-20" : "pb-4",
       ].join(" ")}
       aria-label="Sidebar navigation"
     >
