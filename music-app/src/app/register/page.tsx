@@ -51,7 +51,7 @@ export default function RegisterPage() {
       </div>
 
       {/* Back to landing */}
-      <div className="absolute top-6 left-6">
+      <div className="absolute left-6" style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1.5rem)' }}>
         <Link
           href="/"
           className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"

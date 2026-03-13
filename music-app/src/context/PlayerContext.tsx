@@ -51,6 +51,7 @@ const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
 
 const RECENTLY_PLAYED_KEY = "dizc_recently_played";
 const PLAY_COUNTS_KEY = "dizc_play_counts";
+const VOLUME_KEY = "dizc_volume";
 const MAX_RECENTLY_PLAYED = 20;
 
 function getTrackKey(track: Track, albumInfo?: AlbumInfo | null): string {
@@ -84,7 +85,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const [isPlaying, setIsPlaying] = useState(false);
     const [progress, setProgress] = useState(0);
     const [duration, setDuration] = useState(0);
-    const [volume, setVolumeState] = useState(1);
+    const [volume, setVolumeState] = useState(() => {
+        if (typeof window === "undefined") return 1;
+        const stored = parseFloat(localStorage.getItem(VOLUME_KEY) ?? "1");
+        return isNaN(stored) ? 1 : Math.max(0, Math.min(1, stored));
+    });
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -106,6 +111,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // Stable ref to nextTrackFromRefs so the audio `ended` handler (registered
     // once at mount) always calls the latest version without being stale.
     const nextTrackFromRefsRef = useRef<() => void>(() => {});
+    // True while a track-switch is in progress — suppresses spurious abort/pause
+    // events that the browser fires when the src is changed mid-playback.
+    const isTransitioningRef = useRef(false);
 
     // Extract albumInfo embedded on a track (e.g. from handleShuffleAll),
     // falling back to the provided default.
@@ -196,9 +204,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 src = `localfile://${src.replace(/\\/g, "/")}`;
             }
             console.log("[Player] Playing src:", src);
+            isTransitioningRef.current = true;
             audioRef.current.volume = volume;
             audioRef.current.src = src;
+            audioRef.current.load();
             audioRef.current.play().catch(e => {
+                isTransitioningRef.current = false;
                 if (e.name !== "AbortError") console.error("[Player] Playback failed:", e);
             });
         }
@@ -347,6 +358,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         audioRef.current = new Audio();
+        audioRef.current.preload = "auto";
+        audioRef.current.volume = loadFromStorage<number>(VOLUME_KEY, 1);
         const audio = audioRef.current;
 
         const handleTimeUpdate = () => {
@@ -398,13 +411,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         };
         const handleWaiting = () => setIsLoading(true);
         const handlePlaying = () => {
+            isTransitioningRef.current = false;
             setIsLoading(false);
             setError(null);
             setIsPlaying(true);
         };
         // Sync isPlaying if the browser/OS pauses audio externally
         // (e.g. another tab steals audio focus, headphones disconnect, mobile lock screen)
+        // Ignore pause events that fire as a side-effect of changing the src.
         const handlePause = () => {
+            if (isTransitioningRef.current) return;
             setIsPlaying(false);
         };
 
@@ -415,20 +431,26 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             // handlePause listener already handles state sync. Nothing more to do.
         };
 
-        // Network stall — no data arriving. Wait 2 s then try to recover by
+        // Network stall — no data arriving. Wait 3 s then try to recover by
         // re-seeking to the current position, which re-triggers buffering.
+        // This fires whether the audio is paused or not (it can stall while
+        // technically still in a "playing" state), so don't gate on paused.
         const handleStalled = () => {
+            if (audioRef.current !== audio) return;
             const currentTime = audio.currentTime;
             setTimeout(() => {
-                if (audio.paused && audioRef.current === audio) {
-                    audio.currentTime = currentTime;
+                if (audioRef.current !== audio) return;
+                try { audio.currentTime = currentTime; } catch { /* ignore */ }
+                if (!audio.paused) {
                     audio.play().catch(() => {});
                 }
-            }, 2000);
+            }, 3000);
         };
 
         // The media load was aborted (e.g. src changed mid-load).
+        // Ignore aborts that are caused by our own track-switch transitions.
         const handleAbort = () => {
+            if (isTransitioningRef.current) return;
             setIsLoading(false);
             setIsPlaying(false);
         };
@@ -482,6 +504,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const setVolume = (v: number) => {
         const clamped = Math.max(0, Math.min(1, v));
         setVolumeState(clamped);
+        saveToStorage(VOLUME_KEY, clamped);
         if (audioRef.current) {
             audioRef.current.volume = clamped;
         }

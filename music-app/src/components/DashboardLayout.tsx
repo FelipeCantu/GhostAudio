@@ -104,7 +104,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden lg:ml-64 transition-all duration-300">
         {/* Mobile Header */}
-        <header className="lg:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-background/95 backdrop-blur-md border-b border-white/5 h-14">
+        <header className="lg:hidden sticky top-0 z-30 flex items-center justify-between px-4 pb-3 bg-background/95 backdrop-blur-md border-b border-white/5" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}>
           <button
             onClick={() => setIsMobileMenuOpen(true)}
             className="p-2 -ml-1 text-zinc-300 hover:text-white rounded-lg hover:bg-white/5 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
@@ -135,7 +135,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
         {/* Page Content */}
         <main
-          className="flex-1 p-4 md:p-8 relative z-10 overflow-y-auto overflow-x-hidden"
+          className="flex-1 px-4 pb-4 pt-3 md:px-8 md:pb-8 md:pt-5 relative z-10 overflow-y-auto overflow-x-hidden"
           style={{
             paddingBottom: currentTrack
               ? "calc(9rem + env(safe-area-inset-bottom, 0px))"

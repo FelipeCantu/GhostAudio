@@ -42,7 +42,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className={`relative min-h-screen w-full flex flex-col items-center justify-end overflow-hidden bg-[#0d1b2a] text-[#faf0ca] px-4 transition-[padding-bottom] duration-300 ease-out ${currentTrack ? 'pb-36 lg:pb-24' : 'pb-8'}`}>
+    <div className={`relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden bg-[#0d1b2a] text-[#faf0ca] px-4 transition-[padding-bottom] duration-300 ease-out ${currentTrack ? 'pb-36 lg:pb-24' : 'pb-8'}`}>
       {/* Ambient glow */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-[-15%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-[#f4d35e]/6 blur-[120px]" />
@@ -50,7 +50,7 @@ export default function LoginPage() {
       </div>
 
       {/* Back to landing */}
-      <div className="absolute top-6 left-6">
+      <div className="absolute left-6" style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1.5rem)' }}>
         <Link
           href="/"
           className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"

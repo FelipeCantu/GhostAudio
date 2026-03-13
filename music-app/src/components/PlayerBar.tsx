@@ -62,6 +62,8 @@ export default function PlayerBar() {
   const [showQueue, setShowQueue] = useState(false);
   const [discImgError, setDiscImgError] = useState(false);
   const [cdArtUrl, setCdArtUrl] = useState<string | null>(null);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [scrubValue, setScrubValue] = useState(0);
   const pathname = usePathname();
 
   // In-component cache so the same MBID is never re-fetched across track changes
@@ -151,7 +153,8 @@ export default function PlayerBar() {
   if (!currentTrack || pathname === "/") return null;
 
   const displayDuration = duration && isFinite(duration) ? duration : 0;
-  const progressPercent = displayDuration > 0 ? (progress / displayDuration) * 100 : 0;
+  const rangeValue = scrubbing ? scrubValue : progress;
+  const displayPercent = displayDuration > 0 ? (rangeValue / displayDuration) * 100 : 0;
   const coverArt = currentAlbum?.coverArt;
   const repeatActive = repeatMode !== "off";
   const RepeatIcon = repeatMode === "one" ? Repeat1 : Repeat;
@@ -167,14 +170,18 @@ export default function PlayerBar() {
     }
   };
 
-  const handleSeek = (
-    e: React.MouseEvent<HTMLDivElement>,
-    containerEl: HTMLDivElement | null
-  ) => {
-    if (!containerEl || displayDuration <= 0) return;
-    const rect = containerEl.getBoundingClientRect();
-    const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    seek(percent * displayDuration);
+  // ── Scrubber handlers for <input type="range"> ──────────────────────────────
+  // onChange fires on every frame during drag AND on click — update the preview.
+  // We only call seek() on pointerUp so we don't hammer the audio element.
+  const handleRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setScrubbing(true);
+    setScrubValue(parseFloat(e.target.value));
+  };
+
+  const handleRangeCommit = (e: React.PointerEvent<HTMLInputElement>) => {
+    const val = parseFloat((e.target as HTMLInputElement).value);
+    seek(val);
+    setScrubbing(false);
   };
 
   const cycleSleepTimer = () => {
@@ -343,30 +350,41 @@ export default function PlayerBar() {
                 {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
               </div>
 
-              {/* Progress bar — taller touch hitbox via padding */}
+              {/* Progress bar — native range input, click or drag to seek */}
               <div className="mb-3">
-                <div
-                  className="relative h-2 bg-white/10 rounded-full cursor-pointer transition-all"
-                  onClick={(e) => handleSeek(e, e.currentTarget)}
-                  role="slider"
+                <input
+                  type="range"
+                  min={0}
+                  max={displayDuration || 100}
+                  step={0.1}
+                  value={rangeValue}
+                  onChange={handleRangeChange}
+                  onPointerUp={handleRangeCommit}
                   aria-label="Track progress"
-                  aria-valuenow={Math.round(progressPercent)}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                >
-                  <div
-                    className="h-full bg-gradient-to-r from-[#f4d35e] to-[#ee964b] rounded-full relative"
-                    style={{ width: `${progressPercent}%` }}
-                  >
-                    <div className="absolute inset-0 bg-[#f4d35e] blur-sm opacity-60 rounded-full" />
-                  </div>
-                  <div
-                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-lg z-10"
-                    style={{ left: `${progressPercent}%` }}
-                  />
-                </div>
+                  className={[
+                    "w-full appearance-none cursor-pointer bg-transparent outline-none rounded-full",
+                    "[&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-full",
+                    "[&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-full",
+                    "[&::-webkit-slider-thumb]:appearance-none",
+                    scrubbing
+                      ? "[&::-webkit-slider-thumb]:w-6 [&::-webkit-slider-thumb]:h-6"
+                      : "[&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5",
+                    "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white",
+                    "[&::-webkit-slider-thumb]:shadow-xl [&::-webkit-slider-thumb]:transition-all",
+                    "[&::-moz-range-thumb]:border-0",
+                    scrubbing
+                      ? "[&::-moz-range-thumb]:w-6 [&::-moz-range-thumb]:h-6"
+                      : "[&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:h-5",
+                    "[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white",
+                  ].join(" ")}
+                  style={{
+                    height: scrubbing ? "8px" : "6px",
+                    background: `linear-gradient(to right, #f4d35e ${displayPercent}%, rgba(255,255,255,0.15) ${displayPercent}%)`,
+                    transition: "height 0.1s",
+                  }}
+                />
                 <div className="flex justify-between mt-2 text-xs font-mono text-zinc-500">
-                  <span>{formatTime(progress)}</span>
+                  <span>{formatTime(rangeValue)}</span>
                   <span>{displayDuration > 0 ? formatTime(displayDuration) : "--:--"}</span>
                 </div>
               </div>
@@ -554,25 +572,40 @@ export default function PlayerBar() {
             "bottom-16 lg:bottom-0",
           ].join(" ")}
         >
-          {/* Desktop progress bar — sits above the main bar */}
-          <div
-            className="hidden md:block h-1 bg-white/8 cursor-pointer relative group"
-            onClick={(e) => handleSeek(e, e.currentTarget)}
-            role="slider"
-            aria-label="Track progress"
-            aria-valuenow={Math.round(progressPercent)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
-            <div
-              className="h-full bg-gradient-to-r from-[#f4d35e] to-[#ee964b] relative transition-all duration-150"
-              style={{ width: `${progressPercent}%` }}
-            >
-              <div className="absolute inset-0 bg-[#f4d35e]/50 blur-sm" />
-            </div>
-            <div
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10"
-              style={{ left: `${progressPercent}%` }}
+          {/* Desktop progress bar — native range input, click or drag to seek */}
+          <div className="hidden md:block relative group">
+            <input
+              type="range"
+              min={0}
+              max={displayDuration || 100}
+              step={0.1}
+              value={rangeValue}
+              onChange={handleRangeChange}
+              onPointerUp={handleRangeCommit}
+              aria-label="Track progress"
+              className={[
+                "w-full appearance-none cursor-pointer bg-transparent outline-none",
+                "transition-all duration-100",
+                scrubbing ? "h-2" : "h-1 hover:h-2",
+                // Track
+                "[&::-webkit-slider-runnable-track]:rounded-full",
+                "[&::-webkit-slider-runnable-track]:h-full",
+                "[&::-moz-range-track]:rounded-full",
+                "[&::-moz-range-track]:h-full",
+                // Thumb — hidden until hover/scrubbing
+                "[&::-webkit-slider-thumb]:appearance-none",
+                "[&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3",
+                "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white",
+                "[&::-webkit-slider-thumb]:shadow-lg",
+                scrubbing
+                  ? "[&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:scale-125"
+                  : "group-hover:[&::-webkit-slider-thumb]:opacity-100 [&::-webkit-slider-thumb]:opacity-0",
+                "[&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:h-3",
+                "[&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white",
+              ].join(" ")}
+              style={{
+                background: `linear-gradient(to right, #f4d35e ${displayPercent}%, rgba(255,255,255,0.08) ${displayPercent}%)`,
+              }}
             />
           </div>
 
