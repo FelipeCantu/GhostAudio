@@ -727,19 +727,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
 
     const toggleShuffle = () => {
-        setShuffleMode(prev => {
-            const next = !prev;
-            shuffleModeRef.current = next;
-            if (next) {
-                // Build shuffle queue immediately so the next track is known
-                generateShuffleQueue(queueRef.current, currentTrackRef.current);
-            } else {
-                shuffleQueueRef.current = [];
-                shuffleIndexRef.current = 0;
-                setShuffleQueue([]);
-            }
-            return next;
-        });
+        const next = !shuffleModeRef.current;
+        shuffleModeRef.current = next;
+        setShuffleMode(next);
+        if (next) {
+            generateShuffleQueue(queueRef.current, currentTrackRef.current);
+        } else {
+            shuffleQueueRef.current = [];
+            shuffleIndexRef.current = 0;
+            setShuffleQueue([]);
+        }
     };
 
     const cycleRepeat = () => {

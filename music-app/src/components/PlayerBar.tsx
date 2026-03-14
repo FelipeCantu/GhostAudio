@@ -504,7 +504,7 @@ export default function PlayerBar() {
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: 12, scale: 0.97 }}
             transition={{ type: "spring", damping: 28, stiffness: 360 }}
-            className="fixed right-4 bottom-24 lg:bottom-24 w-72 max-h-96 bg-[#0a1420]/98 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden z-40 shadow-2xl shadow-black/60"
+            className="fixed right-4 bottom-36 lg:bottom-24 w-72 max-h-96 bg-[#0a1420]/98 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden z-[55] shadow-2xl shadow-black/60"
           >
             {/* Panel header */}
             {(() => {
