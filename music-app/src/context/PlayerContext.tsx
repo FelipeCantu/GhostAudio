@@ -39,6 +39,8 @@ interface PlayerContextType {
     toggleShuffle: () => void;
     repeatMode: RepeatMode;
     cycleRepeat: () => void;
+    // Shuffle queue (pre-generated order, empty when shuffle is off)
+    shuffleQueue: Track[];
     // Recently played + play counts
     recentlyPlayed: RecentlyPlayedEntry[];
     playCounts: Record<string, number>;
@@ -99,6 +101,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const [recentlyPlayed, setRecentlyPlayed] = useState<RecentlyPlayedEntry[]>([]);
     const [playCounts, setPlayCounts] = useState<Record<string, number>>({});
     const [sleepMinutes, setSleepMinutesState] = useState<number | null>(null);
+    const [shuffleQueue, setShuffleQueue] = useState<Track[]>([]);
 
     // Refs for the audio element and stale-closure-safe state
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -114,16 +117,83 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // True while a track-switch is in progress — suppresses spurious abort/pause
     // events that the browser fires when the src is changed mid-playback.
     const isTransitioningRef = useRef(false);
-    // Fade helpers
+    // Volume ref (always tracks latest user volume, avoids stale closures)
     const fadeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const volumeRef = useRef(volume);        // always tracks latest user volume
-    const pendingFadeInRef = useRef(false);  // signals handlePlaying to fade in
+    const volumeRef = useRef(volume);
+    // Second audio element used to pre-buffer the next track for gapless playback
+    const preloadRef = useRef<HTMLAudioElement | null>(null);
+    const preloadedSrcRef = useRef<string | null>(null);
+    // Pre-generated shuffled track order — lets us know exactly what comes next
+    const shuffleQueueRef = useRef<Track[]>([]);
+    const shuffleIndexRef = useRef(0);
 
     // Extract albumInfo embedded on a track (e.g. from handleShuffleAll),
     // falling back to the provided default.
     function resolveAlbum(track: Track, fallback: AlbumInfo | null): AlbumInfo | null {
         const embedded = (track as unknown as Record<string, unknown>).albumInfo;
         return (embedded as AlbumInfo | undefined) ?? fallback;
+    }
+
+    // Fisher-Yates shuffle — returns a new shuffled array.
+    function shuffleArray<T>(arr: T[]): T[] {
+        const a = [...arr];
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+    }
+
+    // Build a new shuffled play order from `tracks`, placing `currentTrack`
+    // at position 0 so the currently-playing song isn't immediately repeated.
+    function generateShuffleQueue(tracks: Track[], currentTrack: Track | null): void {
+        if (tracks.length === 0) return;
+        const others = currentTrack
+            ? tracks.filter(t => t.audio_file !== currentTrack.audio_file)
+            : tracks;
+        const shuffled = shuffleArray(others);
+        const newQueue = currentTrack ? [currentTrack, ...shuffled] : shuffled;
+        shuffleQueueRef.current = newQueue;
+        shuffleIndexRef.current = 0;
+        setShuffleQueue(newQueue);
+    }
+
+    // Returns the fully-resolved src URL for the upcoming next track.
+    // Reads only from refs so it's safe to call from mount-time event handlers.
+    function resolveNextSrc(): string | null {
+        let next: Track | undefined;
+
+        if (shuffleModeRef.current) {
+            // Use the pre-generated shuffle queue — next track is always known
+            const sq = shuffleQueueRef.current;
+            const nextIdx = shuffleIndexRef.current + 1;
+            if (nextIdx >= sq.length) return null; // end of shuffle queue
+            next = sq[nextIdx];
+        } else {
+            const track = currentTrackRef.current;
+            const q = queueRef.current;
+            if (!track || q.length === 0) return null;
+            if (repeatModeRef.current === "one") {
+                next = track;
+            } else {
+                const idx = q.findIndex(t => t.audio_file === track.audio_file);
+                if (idx < q.length - 1) next = q[idx + 1];
+                else if (repeatModeRef.current === "all") next = q[0];
+            }
+        }
+
+        if (!next) return null;
+
+        const af = (next as unknown as Record<string, unknown>).audioFile as string | undefined ?? next.audio_file;
+        if (!af) return null;
+
+        const isLocal = !af.startsWith("http") && !af.startsWith("localfile://") && !af.startsWith("file://");
+        if (isLocal) {
+            const isElectron = typeof window !== "undefined" &&
+                (window as unknown as Record<string, unknown>).electronAPI !== undefined;
+            return isElectron ? `localfile://${af.replace(/\\/g, "/")}` : null;
+        }
+        return af;
     }
 
     // Keep refs in sync with state
@@ -202,6 +272,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         currentTrackRef.current = track;
         setCurrentAlbum(albumInfo);
         currentAlbumRef.current = albumInfo;
+
+        // Keep shuffle queue in sync ─────────────────────────────────────────
+        if (shuffleModeRef.current) {
+            if (resolvedQueue !== queueRef.current) {
+                // New source (different album/playlist) — build a fresh shuffle order
+                generateShuffleQueue(resolvedQueue, track);
+            } else {
+                // Same queue — just move the pointer to where we are now
+                const idx = shuffleQueueRef.current.findIndex(t => t.audio_file === audioFile);
+                if (idx !== -1) shuffleIndexRef.current = idx;
+            }
+        }
+
         setQueue(resolvedQueue);
         queueRef.current = resolvedQueue;
         setIsPlaying(true);
@@ -216,39 +299,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             fadeTimerRef.current = null;
         }
 
+        // If we're switching away from what was preloaded, reset so the next
+        // preload cycle picks the correct upcoming track.
+        if (preloadedSrcRef.current !== src) {
+            preloadedSrcRef.current = null;
+        }
+
         console.log("[Player] Playing src:", src);
 
-        const startAudio = () => {
-            pendingFadeInRef.current = true;
-            isTransitioningRef.current = true;
-            audio.volume = 0; // silent start; handlePlaying will fade in
-            audio.src = src;
-            audio.play().catch(e => {
-                isTransitioningRef.current = false;
-                pendingFadeInRef.current = false;
-                audio.volume = volumeRef.current;
-                if (e.name !== "AbortError") console.error("[Player] Playback failed:", e);
-            });
-        };
-
-        // If audio is currently playing, fade it out first then switch
-        if (!audio.paused && audio.currentSrc) {
-            const startVol = audio.volume;
-            const FADE_MS = 250;
-            const STEPS = Math.max(1, Math.round(FADE_MS / 16));
-            let step = 0;
-            fadeTimerRef.current = setInterval(() => {
-                step++;
-                audio.volume = Math.max(0, startVol * (1 - step / STEPS));
-                if (step >= STEPS) {
-                    clearInterval(fadeTimerRef.current!);
-                    fadeTimerRef.current = null;
-                    startAudio();
-                }
-            }, FADE_MS / STEPS);
-        } else {
-            startAudio();
-        }
+        isTransitioningRef.current = true;
+        audio.volume = volumeRef.current;
+        audio.src = src;
+        audio.play().catch(e => {
+            isTransitioningRef.current = false;
+            if (e.name !== "AbortError") console.error("[Player] Playback failed:", e);
+        });
     }, [addToRecentlyPlayed]);
 
     // ─── nextTrack (ref-safe, used inside ended handler) ─────────────────────────
@@ -273,11 +338,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (q.length === 0) return;
 
-        // Shuffle — pick random track that isn't the current one
-        if (shuffleModeRef.current && q.length > 1) {
-            const others = q.filter(t => t.audio_file !== track.audio_file);
-            const next = others[Math.floor(Math.random() * others.length)];
-            playTrackInternal(next, resolveAlbum(next, album), q);
+        // Shuffle — advance through the pre-generated shuffle queue
+        if (shuffleModeRef.current) {
+            const sq = shuffleQueueRef.current;
+            const nextIdx = shuffleIndexRef.current + 1;
+            if (nextIdx < sq.length) {
+                shuffleIndexRef.current = nextIdx;
+                playTrackInternal(sq[nextIdx], resolveAlbum(sq[nextIdx], album), q);
+            } else if (repeatModeRef.current === "all") {
+                // Finished the shuffle queue — reshuffle and loop
+                generateShuffleQueue(q, null);
+                const first = shuffleQueueRef.current[0];
+                if (first) playTrackInternal(first, resolveAlbum(first, album), q);
+            } else {
+                setIsPlaying(false);
+                setProgress(0);
+            }
             return;
         }
 
@@ -396,12 +472,26 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         audioRef.current = new Audio();
         audioRef.current.preload = "auto";
         audioRef.current.volume = loadFromStorage<number>(VOLUME_KEY, 1);
+        preloadRef.current = new Audio();
+        preloadRef.current.preload = "auto";
         const audio = audioRef.current;
 
         const handleTimeUpdate = () => {
             setProgress(audio.currentTime);
             if (audio.duration && isFinite(audio.duration) && audio.duration > 0) {
                 setDuration(audio.duration);
+
+                // When within 15 s of the end, start buffering the next track so
+                // the transition is gapless (browser caches the data before it's needed).
+                const remaining = audio.duration - audio.currentTime;
+                if (remaining > 0 && remaining < 15 && preloadRef.current) {
+                    const nextSrc = resolveNextSrc();
+                    if (nextSrc && preloadedSrcRef.current !== nextSrc) {
+                        preloadedSrcRef.current = nextSrc;
+                        preloadRef.current.src = nextSrc;
+                        preloadRef.current.load();
+                    }
+                }
             }
         };
         const handleLoadedMetadata = () => {
@@ -451,26 +541,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             setIsLoading(false);
             setError(null);
             setIsPlaying(true);
-            // Fade in if a new track just started
-            if (pendingFadeInRef.current) {
-                pendingFadeInRef.current = false;
-                const FADE_MS = 400;
-                const STEPS = Math.max(1, Math.round(FADE_MS / 16));
-                let step = 0;
-                const fadeIn = setInterval(() => {
-                    step++;
-                    const target = volumeRef.current;
-                    if (audioRef.current) {
-                        audioRef.current.volume = target * Math.min(1, step / STEPS);
-                    }
-                    if (step >= STEPS) {
-                        if (audioRef.current) audioRef.current.volume = volumeRef.current;
-                        clearInterval(fadeIn);
-                        fadeTimerRef.current = null;
-                    }
-                }, FADE_MS / STEPS);
-                fadeTimerRef.current = fadeIn;
-            }
         };
         // Sync isPlaying if the browser/OS pauses audio externally
         // (e.g. another tab steals audio focus, headphones disconnect, mobile lock screen)
@@ -537,6 +607,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         return () => {
             audio.pause();
+            if (preloadRef.current) {
+                preloadRef.current.src = "";
+                preloadRef.current = null;
+            }
             audio.removeEventListener("timeupdate", handleTimeUpdate);
             audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
             audio.removeEventListener("durationchange", handleDurationChange);
@@ -622,11 +696,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (q.length === 0) return;
 
-        // Shuffle — pick random track
-        if (shuffleModeRef.current && q.length > 1) {
-            const others = q.filter(t => t.audio_file !== track.audio_file);
-            const prev = others[Math.floor(Math.random() * others.length)];
-            playTrackInternal(prev, resolveAlbum(prev, album), q);
+        // Shuffle — go back in the pre-generated shuffle queue
+        if (shuffleModeRef.current) {
+            const prevIdx = shuffleIndexRef.current - 1;
+            if (prevIdx >= 0) {
+                shuffleIndexRef.current = prevIdx;
+                const prev = shuffleQueueRef.current[prevIdx];
+                playTrackInternal(prev, resolveAlbum(prev, album), q);
+            }
+            // If already at the first track in the shuffle queue, do nothing
             return;
         }
 
@@ -652,6 +730,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setShuffleMode(prev => {
             const next = !prev;
             shuffleModeRef.current = next;
+            if (next) {
+                // Build shuffle queue immediately so the next track is known
+                generateShuffleQueue(queueRef.current, currentTrackRef.current);
+            } else {
+                shuffleQueueRef.current = [];
+                shuffleIndexRef.current = 0;
+                setShuffleQueue([]);
+            }
             return next;
         });
     };
@@ -709,6 +795,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             toggleShuffle,
             repeatMode,
             cycleRepeat,
+            shuffleQueue,
             recentlyPlayed,
             playCounts,
             sleepMinutes,

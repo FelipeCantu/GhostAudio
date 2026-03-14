@@ -260,6 +260,7 @@ function MobileBottomSheet({
   pathname,
 }: MobileSheetProps) {
   const isActive = (path: string) => pathname === path;
+  const { currentTrack } = usePlayer();
   const dragY = useMotionValue(0);
 
   // Fade out slightly as user drags down
@@ -289,7 +290,7 @@ function MobileBottomSheet({
       <motion.div
         key="mobile-sheet"
         initial={{ y: "100%" }}
-        animate={{ y: 0 }}
+        animate={{ y: 0, marginBottom: currentTrack ? 130 : 64 }}
         exit={{ y: "100%" }}
         transition={{ type: "spring", damping: 30, stiffness: 300 }}
         style={{ opacity: sheetOpacity, y: dragY }}
@@ -303,8 +304,6 @@ function MobileBottomSheet({
           "border-t border-white/[0.07]",
           "shadow-[0_-8px_40px_rgba(0,0,0,0.7)]",
           "max-h-[88vh] flex flex-col",
-          /* Push up above mobile bottom nav (64px) */
-          "mb-16",
         ].join(" ")}
         role="dialog"
         aria-modal="true"

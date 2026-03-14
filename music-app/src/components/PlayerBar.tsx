@@ -50,6 +50,7 @@ export default function PlayerBar() {
     queue,
     shuffleMode,
     toggleShuffle,
+    shuffleQueue,
     repeatMode,
     cycleRepeat,
     sleepMinutes,
@@ -454,7 +455,13 @@ export default function PlayerBar() {
               {/* Shuffle + Repeat */}
               <div className="flex items-center justify-center gap-10 mb-10">
                 <button
-                  onClick={toggleShuffle}
+                  onClick={() => {
+                    if (!shuffleMode) {
+                      setIsExpanded(false);
+                      setShowQueue(true);
+                    }
+                    toggleShuffle();
+                  }}
                   className={`relative flex flex-col items-center min-w-[44px] min-h-[44px] justify-center transition-colors ${
                     shuffleMode ? "text-[#f4d35e]" : "text-zinc-500 hover:text-zinc-300"
                   }`}
@@ -500,64 +507,79 @@ export default function PlayerBar() {
             className="fixed right-4 bottom-24 lg:bottom-24 w-72 max-h-96 bg-[#0a1420]/98 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden z-40 shadow-2xl shadow-black/60"
           >
             {/* Panel header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <ListMusic size={14} className="text-zinc-400" />
-                <span className="text-sm font-bold text-white">Queue</span>
-              </div>
-              <span className="text-xs text-zinc-500 tabular-nums">
-                {queue.length} track{queue.length !== 1 ? "s" : ""}
-              </span>
-            </div>
+            {(() => {
+              const displayQueue = shuffleMode && shuffleQueue.length > 0 ? shuffleQueue : queue;
+              const currentIdx = displayQueue.findIndex(t => t.audio_file === currentTrack.audio_file);
+              return (
+                <>
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                      <ListMusic size={14} className={shuffleMode ? "text-[#f4d35e]" : "text-zinc-400"} />
+                      <span className="text-sm font-bold text-white">
+                        {shuffleMode ? "Shuffle Queue" : "Queue"}
+                      </span>
+                    </div>
+                    <span className="text-xs text-zinc-500 tabular-nums">
+                      {shuffleMode && currentIdx !== -1
+                        ? `${currentIdx + 1} / ${displayQueue.length}`
+                        : `${displayQueue.length} track${displayQueue.length !== 1 ? "s" : ""}`}
+                    </span>
+                  </div>
 
-            {/* Track list */}
-            <div className="overflow-y-auto" style={{ maxHeight: "calc(24rem - 48px)" }}>
-              {queue.length === 0 ? (
-                <p className="text-sm text-zinc-500 text-center py-8 px-4">
-                  No tracks in queue
-                </p>
-              ) : (
-                queue.map((track, idx) => {
-                  const isCurrent = track.audio_file === currentTrack.audio_file;
-                  return (
-                    <button
-                      key={`queue-${track.id}-${idx}`}
-                      onClick={() => {
-                        playTrack(track, queue, currentAlbum ?? undefined);
-                        setShowQueue(false);
-                      }}
-                      className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                        isCurrent
-                          ? "bg-[#f4d35e]/8 hover:bg-[#f4d35e]/12"
-                          : "hover:bg-white/6"
-                      }`}
-                      aria-label={`Play ${track.title}`}
-                      aria-current={isCurrent ? "true" : undefined}
-                    >
-                      <span
-                        className={`text-xs font-mono w-5 text-right flex-shrink-0 ${
-                          isCurrent ? "text-[#f4d35e]" : "text-zinc-600"
-                        }`}
-                      >
-                        {idx + 1}
-                      </span>
-                      <span
-                        className={`text-sm truncate flex-1 ${
-                          isCurrent
-                            ? "text-[#f4d35e] font-semibold"
-                            : "text-zinc-300"
-                        }`}
-                      >
-                        {track.title}
-                      </span>
-                      {isCurrent && (
-                        <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-[#f4d35e] animate-pulse" />
-                      )}
-                    </button>
-                  );
-                })
-              )}
-            </div>
+                  {/* Track list */}
+                  <div className="overflow-y-auto" style={{ maxHeight: "calc(24rem - 48px)" }}>
+                    {displayQueue.length === 0 ? (
+                      <p className="text-sm text-zinc-500 text-center py-8 px-4">
+                        No tracks in queue
+                      </p>
+                    ) : (
+                      displayQueue.map((track, idx) => {
+                        const isCurrent = track.audio_file === currentTrack.audio_file;
+                        const isPast = shuffleMode && idx < currentIdx;
+                        return (
+                          <button
+                            key={`queue-${track.id}-${idx}`}
+                            onClick={() => {
+                              playTrack(track, queue, currentAlbum ?? undefined);
+                              setShowQueue(false);
+                            }}
+                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
+                              isCurrent
+                                ? "bg-[#f4d35e]/8 hover:bg-[#f4d35e]/12"
+                                : "hover:bg-white/6"
+                            }`}
+                            aria-label={`Play ${track.title}`}
+                            aria-current={isCurrent ? "true" : undefined}
+                          >
+                            <span
+                              className={`text-xs font-mono w-5 text-right flex-shrink-0 ${
+                                isCurrent ? "text-[#f4d35e]" : isPast ? "text-zinc-700" : "text-zinc-600"
+                              }`}
+                            >
+                              {idx + 1}
+                            </span>
+                            <span
+                              className={`text-sm truncate flex-1 ${
+                                isCurrent
+                                  ? "text-[#f4d35e] font-semibold"
+                                  : isPast
+                                  ? "text-zinc-600"
+                                  : "text-zinc-300"
+                              }`}
+                            >
+                              {track.title}
+                            </span>
+                            {isCurrent && (
+                              <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-[#f4d35e] animate-pulse" />
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </motion.div>
         )}
       </AnimatePresence>
@@ -676,7 +698,10 @@ export default function PlayerBar() {
             <div className="hidden md:flex items-center gap-3 md:gap-4 flex-shrink-0">
               {/* Shuffle */}
               <button
-                onClick={toggleShuffle}
+                onClick={() => {
+                  if (!shuffleMode) setShowQueue(true);
+                  toggleShuffle();
+                }}
                 className={`relative flex flex-col items-center min-w-[32px] min-h-[32px] justify-center transition-colors ${
                   shuffleMode ? "text-[#f4d35e]" : "text-zinc-500 hover:text-zinc-300"
                 }`}
