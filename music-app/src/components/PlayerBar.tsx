@@ -17,6 +17,7 @@ import {
   Repeat1,
   ListMusic,
   Moon,
+  X,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -493,94 +494,163 @@ export default function PlayerBar() {
       </AnimatePresence>
 
       {/* ─────────────────────────────────────────────────────────────────────────
-          Queue panel (desktop, slides in from right)
+          Queue panel — Apple Music style
       ───────────────────────────────────────────────────────────────────────── */}
       <AnimatePresence>
         {showQueue && (
-          <motion.div
-            key="queue-panel"
-            ref={queuePanelRef}
-            initial={{ opacity: 0, x: 12, scale: 0.97 }}
-            animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: 12, scale: 0.97 }}
-            transition={{ type: "spring", damping: 28, stiffness: 360 }}
-            className="fixed right-4 bottom-36 lg:bottom-24 w-72 max-h-96 bg-[#0a1420]/98 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden z-[55] shadow-2xl shadow-black/60"
-          >
-            {/* Panel header */}
-            {(() => {
-              const displayQueue = shuffleMode && shuffleQueue.length > 0 ? shuffleQueue : queue;
-              const currentIdx = displayQueue.findIndex(t => t.audio_file === currentTrack.audio_file);
-              return (
-                <>
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 flex-shrink-0">
-                    <div className="flex items-center gap-2">
-                      <ListMusic size={14} className={shuffleMode ? "text-[#f4d35e]" : "text-zinc-400"} />
-                      <span className="text-sm font-bold text-white">
-                        {shuffleMode ? "Shuffle Queue" : "Queue"}
+          <>
+            {/* Mobile backdrop */}
+            <motion.div
+              key="queue-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="lg:hidden fixed inset-0 bg-black/60 z-[54]"
+              onClick={() => setShowQueue(false)}
+            />
+
+            {/* Panel */}
+            <motion.div
+              key="queue-panel"
+              ref={queuePanelRef}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 16 }}
+              transition={{ type: "spring", damping: 30, stiffness: 350 }}
+              className={[
+                "fixed z-[55] flex flex-col",
+                "bg-[#0d1c2e]/98 backdrop-blur-2xl border border-white/10 rounded-2xl",
+                "shadow-2xl shadow-black/70",
+                // Mobile: full-width, sits above the player bar
+                "inset-x-2 bottom-[138px] max-h-[58vh]",
+                // Desktop: right-side panel above player bar
+                "lg:inset-x-auto lg:right-4 lg:bottom-24 lg:w-[340px] lg:max-h-[65vh]",
+              ].join(" ")}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 pt-4 pb-3 flex-shrink-0">
+                <h3 className="text-base font-bold text-white">
+                  {shuffleMode ? "Shuffle Queue" : "Playing Next"}
+                </h3>
+                <button
+                  onClick={() => setShowQueue(false)}
+                  className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/20 transition-colors"
+                  aria-label="Close queue"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {/* Now Playing row */}
+              <div className="px-4 pb-3 flex-shrink-0">
+                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2 px-1">
+                  Now Playing
+                </p>
+                <div className="flex items-center gap-3 bg-white/6 rounded-xl px-3 py-2.5">
+                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-800 flex-shrink-0 shadow-md">
+                    {coverArt ? (
+                      <img src={coverArt} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Disc size={18} className="text-zinc-600" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-white truncate">{currentTrack.title}</p>
+                    <p className="text-xs text-zinc-400 truncate">
+                      {currentAlbum?.artist ?? ""}
+                      {currentAlbum?.title ? ` · ${currentAlbum.title}` : ""}
+                    </p>
+                  </div>
+                  {/* Animated equalizer bars */}
+                  <div className="flex items-end gap-[3px] h-4 flex-shrink-0">
+                    {[0.45, 0.6, 0.5].map((dur, i) => (
+                      <motion.div
+                        key={i}
+                        className="w-[3px] rounded-full bg-[#f4d35e]"
+                        animate={isPlaying ? { height: ["3px", "14px", "3px"] } : { height: "3px" }}
+                        transition={
+                          isPlaying
+                            ? { duration: dur, repeat: Infinity, ease: "easeInOut", delay: i * 0.12 }
+                            : {}
+                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Up Next list */}
+              {(() => {
+                const displayQueue = shuffleMode && shuffleQueue.length > 0 ? shuffleQueue : queue;
+                const currentIdx = displayQueue.findIndex(
+                  (t) => t.audio_file === currentTrack.audio_file
+                );
+                const upcomingTracks =
+                  currentIdx >= 0 ? displayQueue.slice(currentIdx + 1) : displayQueue;
+
+                return (
+                  <>
+                    <div className="px-5 pb-2 flex-shrink-0 flex items-center justify-between">
+                      <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                        {shuffleMode ? "Shuffle · Up Next" : "Up Next"}
+                      </p>
+                      <span className="text-[10px] text-zinc-600">
+                        {upcomingTracks.length} left
                       </span>
                     </div>
-                    <span className="text-xs text-zinc-500 tabular-nums">
-                      {shuffleMode && currentIdx !== -1
-                        ? `${currentIdx + 1} / ${displayQueue.length}`
-                        : `${displayQueue.length} track${displayQueue.length !== 1 ? "s" : ""}`}
-                    </span>
-                  </div>
 
-                  {/* Track list */}
-                  <div className="overflow-y-auto" style={{ maxHeight: "calc(24rem - 48px)" }}>
-                    {displayQueue.length === 0 ? (
-                      <p className="text-sm text-zinc-500 text-center py-8 px-4">
-                        No tracks in queue
-                      </p>
-                    ) : (
-                      displayQueue.map((track, idx) => {
-                        const isCurrent = track.audio_file === currentTrack.audio_file;
-                        const isPast = shuffleMode && idx < currentIdx;
-                        return (
+                    <div className="overflow-y-auto flex-1 pb-3">
+                      {upcomingTracks.length === 0 ? (
+                        <p className="text-sm text-zinc-600 text-center py-6 px-4">
+                          Nothing up next
+                        </p>
+                      ) : (
+                        upcomingTracks.map((track, i) => (
                           <button
-                            key={`queue-${track.id}-${idx}`}
+                            key={`q-${track.id}-${i}`}
                             onClick={() => {
                               playTrack(track, queue, currentAlbum ?? undefined);
                               setShowQueue(false);
                             }}
-                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                              isCurrent
-                                ? "bg-[#f4d35e]/8 hover:bg-[#f4d35e]/12"
-                                : "hover:bg-white/6"
-                            }`}
+                            className="w-full flex items-center gap-3 px-4 py-2 text-left hover:bg-white/5 transition-colors group"
                             aria-label={`Play ${track.title}`}
-                            aria-current={isCurrent ? "true" : undefined}
                           >
-                            <span
-                              className={`text-xs font-mono w-5 text-right flex-shrink-0 ${
-                                isCurrent ? "text-[#f4d35e]" : isPast ? "text-zinc-700" : "text-zinc-600"
-                              }`}
-                            >
-                              {idx + 1}
+                            <div className="w-9 h-9 rounded-lg overflow-hidden bg-zinc-800 flex-shrink-0 shadow">
+                              {coverArt ? (
+                                <img
+                                  src={coverArt}
+                                  alt=""
+                                  className="w-full h-full object-cover opacity-75 group-hover:opacity-100 transition-opacity"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <Disc size={14} className="text-zinc-700" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm text-zinc-200 truncate group-hover:text-white transition-colors">
+                                {track.title}
+                              </p>
+                              <p className="text-xs text-zinc-500 truncate">
+                                {currentAlbum?.artist ?? ""}
+                              </p>
+                            </div>
+                            <span className="text-xs text-zinc-700 font-mono flex-shrink-0 group-hover:text-zinc-500 transition-colors">
+                              {currentIdx + 1 + i + 1}
                             </span>
-                            <span
-                              className={`text-sm truncate flex-1 ${
-                                isCurrent
-                                  ? "text-[#f4d35e] font-semibold"
-                                  : isPast
-                                  ? "text-zinc-600"
-                                  : "text-zinc-300"
-                              }`}
-                            >
-                              {track.title}
-                            </span>
-                            {isCurrent && (
-                              <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-[#f4d35e] animate-pulse" />
-                            )}
                           </button>
-                        );
-                      })
-                    )}
-                  </div>
-                </>
-              );
-            })()}
-          </motion.div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
 
