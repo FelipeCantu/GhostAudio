@@ -23,6 +23,7 @@ export default function CDImporter() {
         currentTrack,
         totalTracks,
         trackStatuses,
+        cloudStatuses,
         ripSessionId,
         startImport,
         cancelImport,
@@ -442,6 +443,7 @@ const fetchMetadata = async (drive: string) => {
                                                     const tInfo = trackStatuses[String(track.track_number)];
                                                     const tStatus = tInfo?.status;
                                                     const tPercent = tInfo?.percent ?? 0;
+                                                    const cInfo = cloudStatuses[String(track.track_number)];
                                                     return (
                                                         <div
                                                             key={track.track_number}
@@ -487,6 +489,22 @@ const fetchMetadata = async (drive: string) => {
                                                                         ? `${Math.floor(track.duration_ms / 60000)}:${String(Math.floor((track.duration_ms % 60000) / 1000)).padStart(2, '0')}`
                                                                         : ''
                                                                 }
+                                                            </span>
+                                                            {/* Cloud upload status */}
+                                                            <span className="relative w-5 flex items-center justify-center shrink-0 ml-1" title={cInfo?.message}>
+                                                                {cInfo?.stage === 'uploading' ? (
+                                                                    <svg className="w-3.5 h-3.5 text-blue-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                                                    </svg>
+                                                                ) : cInfo?.stage === 'done' ? (
+                                                                    <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 12l2 2 4-4" />
+                                                                    </svg>
+                                                                ) : cInfo?.stage === 'error' ? (
+                                                                    <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9.5 14.5l5-5M14.5 14.5l-5-5" />
+                                                                    </svg>
+                                                                ) : null}
                                                             </span>
                                                         </div>
                                                     );
@@ -602,11 +620,13 @@ const fetchMetadata = async (drive: string) => {
                                                         <div className="flex justify-between text-xs text-zinc-400 mb-1">
                                                             <span>Progress</span>
                                                             <span>
-                                                                {overallPercent < 100
-                                                                    ? `Reading CD: ${overallPercent}%`
-                                                                    : totalTracks > 0
-                                                                        ? `Extracting: ${currentTrack} / ${totalTracks}`
-                                                                        : 'Processing...'
+                                                                {importStatus === 'uploading'
+                                                                    ? `Syncing to cloud: ${currentTrack} / ${totalTracks}`
+                                                                    : overallPercent < 100
+                                                                        ? `Reading CD: ${overallPercent}%`
+                                                                        : totalTracks > 0
+                                                                            ? `Extracting: ${currentTrack} / ${totalTracks}`
+                                                                            : 'Processing...'
                                                                 }
                                                             </span>
                                                         </div>

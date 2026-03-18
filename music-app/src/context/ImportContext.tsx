@@ -8,6 +8,12 @@ export interface TrackStatus {
     percent: number;
 }
 
+export interface CloudTrackStatus {
+    stage: 'uploading' | 'done' | 'error';
+    url?: string;
+    message?: string;
+}
+
 export type ImportStatus = 'idle' | 'ripping' | 'uploading' | 'completed' | 'error';
 
 interface ImportState {
@@ -19,6 +25,7 @@ interface ImportState {
     totalTracks: number;
     ripSessionId: string | null;
     trackStatuses: Record<string, TrackStatus>;
+    cloudStatuses: Record<string, CloudTrackStatus>;
     importMetadata: any;
 }
 
@@ -43,6 +50,7 @@ const initialState: ImportState = {
     totalTracks: 0,
     ripSessionId: null,
     trackStatuses: {},
+    cloudStatuses: {},
     importMetadata: null,
 };
 
@@ -186,6 +194,16 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
                     sessionIdRef.current = null;
                 }
 
+            } else if (data.type === 'cloud_upload') {
+                const key = String(data.track_number);
+                setState(prev => ({
+                    ...prev,
+                    cloudStatuses: {
+                        ...prev.cloudStatuses,
+                        [key]: { stage: data.stage, url: data.url, message: data.message },
+                    },
+                }));
+
             } else if (data.type === 'saved') {
                 setState(prev => ({ ...prev, message: 'Saved to library!' }));
 
@@ -237,6 +255,7 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
             totalTracks: trackCount,
             ripSessionId: null,
             trackStatuses: initialStatuses,
+            cloudStatuses: {},
             importMetadata: args.metadata,
         });
 
@@ -262,6 +281,7 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
                 });
 
                 setTimeout(() => {
+                    if (cancelledRef.current) return;
                     setState(prev => ({
                         ...prev,
                         importStatus: 'completed',
@@ -270,6 +290,7 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
                         totalTracks: 0,
                         overallPercent: 0,
                         trackStatuses: {},
+                        cloudStatuses: {},
                         ripSessionId: null,
                     }));
                     clearPersistedState();
@@ -299,6 +320,8 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
     }, []);
 
     const cancelImport = useCallback(async () => {
+        cancelledRef.current = true;
+        setState({ ...initialState, message: 'Import cancelled.' });
         const sessionId = sessionIdRef.current;
         if (sessionId) {
             try {
@@ -307,8 +330,6 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
                 console.error('[ImportContext] Cancel error:', err);
             }
         }
-        cancelledRef.current = true;
-        setState({ ...initialState, message: 'Import cancelled.' });
         sessionIdRef.current = null;
         clearPersistedState();
     }, []);

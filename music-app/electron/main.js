@@ -46,6 +46,7 @@ async function _uploadTrackToR2(localPath, objectKey) {
 
 let mainWindow;
 let backendProcess = null;
+let nextProcess = null;
 
 const isDev = !app.isPackaged;
 // const appServe = isDev ? null : serve({ directory: path.join(__dirname, '../out') }); // Removed
@@ -204,6 +205,60 @@ if (!gotTheLock) {
   });
 }
 
+function startNextDev() {
+  const appDir = path.join(__dirname, '..');
+  // Kill anything holding port 3000 before spawning so Next.js always gets it
+  try {
+    require('child_process').execSync(
+      'for /f "tokens=5" %a in (\'netstat -ano ^| findstr ":3000" ^| findstr LISTENING\') do taskkill /PID %a /F /T',
+      { shell: 'cmd.exe', stdio: 'ignore' }
+    );
+  } catch (_) {}
+  console.log('[Dev Next.js] Starting Next.js dev server');
+  nextProcess = spawn('npx', ['next', 'dev'], {
+    cwd: appDir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: true,
+  });
+  nextProcess.stdout.on('data', (d) => console.log('[Next.js]:', d.toString().trimEnd()));
+  nextProcess.stderr.on('data', (d) => console.log('[Next.js]:', d.toString().trimEnd()));
+  nextProcess.on('error', (err) => console.error('[Dev Next.js] Failed to start:', err));
+  return nextProcess;
+}
+
+async function waitForNextJs(url, timeout = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    try {
+      const res = await net.fetch(url);
+      if (res.status < 500) return true;
+    } catch (_) {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return false;
+}
+
+function startDevBackend() {
+  const backendDir = path.join(__dirname, '../../backend');
+  const pythonExe = path.join(backendDir, 'venv/Scripts/python.exe');
+
+  if (!fs.existsSync(pythonExe)) {
+    console.error('[Dev Backend] Python venv not found at:', pythonExe);
+    return;
+  }
+
+  console.log('[Dev Backend] Starting Django at', backendDir);
+  backendProcess = spawn(pythonExe, ['manage.py', 'runserver'], {
+    cwd: backendDir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  backendProcess.stdout.on('data', (d) => console.log('[Backend]:', d.toString().trimEnd()));
+  backendProcess.stderr.on('data', (d) => console.log('[Backend]:', d.toString().trimEnd()));
+  backendProcess.on('error', (err) => console.error('[Dev Backend] Failed to start:', err));
+  backendProcess.on('exit', (code) => console.log('[Dev Backend] Exited with code', code));
+}
+
 function startBackend() {
   if (isDev) return;
 
@@ -256,7 +311,23 @@ function createWindow() {
 
   if (isDev) {
     const startUrl = process.env.ELECTRON_START_URL || 'http://localhost:3000';
-    mainWindow.loadURL(startUrl + '/app');
+    startDevBackend();
+    startNextDev();
+    mainWindow.loadURL('data:text/html,<html><body style="background:#0a0a0a;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif;color:#888;font-size:14px;">Starting GhostAudio...</body></html>');
+    mainWindow.webContents.openDevTools();
+    const loadWhenReady = (retries = 30) => {
+      waitForNextJs(startUrl, 3000).then((ready) => {
+        if (ready) {
+          mainWindow.loadURL(startUrl + '/app');
+        } else if (retries > 0) {
+          console.log(`[Dev] Next.js not ready, retrying... (${retries} left)`);
+          setTimeout(() => loadWhenReady(retries - 1), 2000);
+        } else {
+          console.error('[Dev] Next.js failed to start after all retries');
+        }
+      });
+    };
+    loadWhenReady();
   } else {
     // Load UI immediately
     mainWindow.loadURL('app://-/app.html');
@@ -439,11 +510,9 @@ ipcMain.handle('rip-cd', async (event, args) => {
 
             if (event.sender && !event.sender.isDestroyed()) {
               event.sender.send('rip-progress', {
-                type: 'progress',
+                type: 'cloud_upload',
+                track_number: track.trackNumber,
                 stage: 'uploading',
-                message: `Uploading to cloud: ${i + 1} / ${tracksToUpload.length}`,
-                current: i + 1,
-                total: tracksToUpload.length,
               });
             }
 
@@ -453,11 +522,27 @@ ipcMain.handle('rip-cd', async (event, args) => {
               if (r2Url) {
                 updatedTracks.push({ track_number: track.trackNumber, audio_file: r2Url });
                 ripLog(`Uploaded: ${filename} -> ${r2Url.slice(0, 60)}`);
+                if (event.sender && !event.sender.isDestroyed()) {
+                  event.sender.send('rip-progress', {
+                    type: 'cloud_upload',
+                    track_number: track.trackNumber,
+                    stage: 'done',
+                    url: r2Url,
+                  });
+                }
               } else {
                 ripLog(`Upload returned null for ${filename} (R2 may not be configured)`);
               }
             } catch (uploadErr) {
               ripLog(`Upload FAILED for ${filename}: ${uploadErr.message}`);
+              if (event.sender && !event.sender.isDestroyed()) {
+                event.sender.send('rip-progress', {
+                  type: 'cloud_upload',
+                  track_number: track.trackNumber,
+                  stage: 'error',
+                  message: uploadErr.message,
+                });
+              }
             }
           }
 
@@ -870,7 +955,13 @@ app.on('window-all-closed', async function () {
     }
     // Kill backend
     if (backendProcess) {
+      try { require('child_process').execSync(`taskkill /PID ${backendProcess.pid} /F /T`, { stdio: 'ignore' }); } catch (_) {}
       backendProcess.kill();
+    }
+    // Kill Next.js entire process tree (shell: true means .kill() only kills cmd.exe, not the node children)
+    if (nextProcess) {
+      try { require('child_process').execSync(`taskkill /PID ${nextProcess.pid} /F /T`, { stdio: 'ignore' }); } catch (_) {}
+      nextProcess.kill();
     }
     app.quit();
   }
