@@ -113,24 +113,36 @@ def _get_r2_client():
     )
 
 
+_R2_MIME_TYPES = {'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac',
+                   'm4a': 'audio/mp4', 'aac': 'audio/aac', 'ogg': 'audio/ogg'}
+_R2_UPLOAD_ATTEMPTS = 3
+_R2_RETRY_DELAY_SECONDS = 2
+
+
 def _upload_to_r2(local_path: str, object_key: str) -> str:
-    """Upload file to R2, return public URL. Returns local_path unchanged if R2 not configured."""
+    """Upload file to R2, return public URL. Returns local_path unchanged if R2 not configured.
+    Retries up to _R2_UPLOAD_ATTEMPTS times before falling back."""
     if not settings.R2_ACCOUNT_ID:
         return local_path
-    try:
-        ext = os.path.splitext(local_path)[1].lower().lstrip('.')
-        mime = {'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac',
-                'm4a': 'audio/mp4', 'aac': 'audio/aac', 'ogg': 'audio/ogg'}.get(ext, 'application/octet-stream')
-        _get_r2_client().upload_file(local_path, settings.R2_BUCKET_NAME, object_key,
-                                     ExtraArgs={'ContentType': mime})
-        return f"{settings.R2_PUBLIC_URL}/{object_key}"
-    except Exception as e:
-        logger.warning(f"R2 upload failed for {local_path}: {e}")
-        from pathlib import Path as _P
-        _dbg = _P(os.path.expanduser('~')) / 'ghost_app_debug.log'
-        with open(_dbg, 'a') as _f:
-            _f.write(f"[R2 ERROR] {type(e).__name__}: {e} | key={os.path.basename(local_path)} | bucket={settings.R2_BUCKET_NAME} | account_id_len={len(settings.R2_ACCOUNT_ID)}\n")
-        return local_path  # graceful fallback
+    import time
+    ext = os.path.splitext(local_path)[1].lower().lstrip('.')
+    mime = _R2_MIME_TYPES.get(ext, 'application/octet-stream')
+    last_err = None
+    for attempt in range(_R2_UPLOAD_ATTEMPTS):
+        try:
+            _get_r2_client().upload_file(local_path, settings.R2_BUCKET_NAME, object_key,
+                                         ExtraArgs={'ContentType': mime})
+            return f"{settings.R2_PUBLIC_URL}/{object_key}"
+        except Exception as e:
+            last_err = e
+            if attempt < _R2_UPLOAD_ATTEMPTS - 1:
+                time.sleep(_R2_RETRY_DELAY_SECONDS)
+    logger.warning(f"R2 upload failed after {_R2_UPLOAD_ATTEMPTS} attempts for {local_path}: {last_err}")
+    from pathlib import Path as _P
+    _dbg = _P(os.path.expanduser('~')) / 'ghost_app_debug.log'
+    with open(_dbg, 'a') as _f:
+        _f.write(f"[R2 ERROR] {type(last_err).__name__}: {last_err} | key={os.path.basename(local_path)} | bucket={settings.R2_BUCKET_NAME} | account_id_len={len(settings.R2_ACCOUNT_ID)}\n")
+    return local_path  # graceful fallback
 
 
 # --- MongoDB Auth Views ---
@@ -166,7 +178,7 @@ def mongo_auth_register(request):
         return Response({'success': True, 'username': username}, status=201)
     except Exception as e:
         logger.error(f"mongo_auth_register error: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Registration failed'}, status=500)
 
 
 @api_view(['POST'])
@@ -186,7 +198,7 @@ def mongo_auth_login(request):
         return Response({'access': token, 'user': {'id': str(user['_id']), 'username': username}})
     except Exception as e:
         logger.error(f"mongo_auth_login error: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Login failed'}, status=500)
 
 
 @api_view(['GET'])
@@ -271,8 +283,13 @@ def mongo_upload_audio(request):
         tmp_path = tmp.name
 
     object_key = f"audio/{user_id}/{artist}/{album_title}/{audio_file.name}"
-    url = _upload_to_r2(tmp_path, object_key)
-    os.unlink(tmp_path)
+    try:
+        url = _upload_to_r2(tmp_path, object_key)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
     # --- Atomically record consumed bytes (only after successful upload) ---
     try:
@@ -289,7 +306,17 @@ def mongo_upload_audio(request):
 @permission_classes([permissions.AllowAny])
 def mongo_upload_cover(request):
     """Upload a cover art image to R2 and return the public URL."""
-    user_id = request.data.get('user_id')
+    # Resolve user_id: prefer JWT, fall back to body param for legacy callers.
+    auth = request.META.get('HTTP_AUTHORIZATION', '')
+    user_id = None
+    if auth.startswith('Bearer '):
+        try:
+            payload = pyjwt.decode(auth[7:], _JWT_SECRET, algorithms=['HS256'])
+            user_id = payload.get('id')
+        except Exception:
+            pass
+    user_id = user_id or request.data.get('user_id')
+
     album_title = request.data.get('album_title', 'Unknown')
     artist = request.data.get('artist', 'Unknown Artist')
     image_file = request.FILES.get('file')
@@ -302,8 +329,13 @@ def mongo_upload_cover(request):
             tmp.write(chunk)
         tmp_path = tmp.name
     object_key = f"covers/{user_id}/{artist}/{album_title}/cover{ext}"
-    url = _upload_to_r2(tmp_path, object_key)
-    os.unlink(tmp_path)
+    try:
+        url = _upload_to_r2(tmp_path, object_key)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
     return Response({'url': url})
 
 
@@ -399,7 +431,7 @@ def mongo_quota_migrate(request):
         })
     except Exception as e:
         logger.error(f"mongo_quota_migrate error: {e}")
-        return Response({'error': 'Migration failed', 'detail': str(e)}, status=500)
+        return Response({'error': 'Migration failed'}, status=500)
 
 
 # --- Auth Views ---
@@ -431,16 +463,21 @@ def dashboard_stats(request):
         return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})
 
     try:
-        client = MongoClient(settings.MONGODB_URI, serverSelectionTimeoutMS=20000)
-        db = client.get_database()
+        from bson.errors import InvalidId
+        user_obj = ObjectId(user_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid user_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         albums_collection = db['albums']
 
-        albums = list(albums_collection.find({'user': ObjectId(user_id)}))
+        albums = list(albums_collection.find({'user': user_obj}))
 
         total_albums = len(albums)
         total_tracks = sum(len(a.get('tracks', [])) for a in albums)
 
-        recent = albums_collection.find({'user': ObjectId(user_id)}).sort('createdAt', -1).limit(5)
+        recent = albums_collection.find({'user': user_obj}).sort('createdAt', -1).limit(5)
         recent_albums = []
         for album in recent:
             recent_albums.append({
@@ -492,7 +529,8 @@ def get_cd_metadata(request):
             metadata = ripper.get_cd_metadata(drive)
             return JsonResponse(metadata)
         except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
+            logger.error(f"get_cd_metadata error: {e}")
+            return JsonResponse({'error': 'Metadata lookup failed'}, status=500)
     return JsonResponse({'error': 'Invalid method'}, status=405)
 
 # Helper for consistent path
@@ -539,13 +577,7 @@ def rip_cd(request):
         # 2. Bridge to MongoDB (Primary)
         if mongo_user_id and settings.MONGODB_URI:
             try:
-                client = MongoClient(
-                    settings.MONGODB_URI,
-                    serverSelectionTimeoutMS=20000,
-                    socketTimeoutMS=10000,
-                    connectTimeoutMS=5000,
-                )
-                db = client.get_database() # Uses database from URI
+                db = _get_mongo_client().get_database()
                 albums_collection = db['albums']
                 
                 safe_metadata = metadata or {}
@@ -694,13 +726,7 @@ def rip_cd_stream(request):
                 _f.write(f"[{datetime.now()}] Rip finished. tracks={len(result_holder['tracks'] or [])}, error={result_holder['error']}, user={mongo_user_id}, has_mongo_uri={bool(settings.MONGODB_URI)}\n")
             if result_holder['tracks'] and mongo_user_id and settings.MONGODB_URI:
                 try:
-                    client = MongoClient(
-                        settings.MONGODB_URI,
-                        serverSelectionTimeoutMS=20000,
-                        socketTimeoutMS=10000,
-                        connectTimeoutMS=5000,
-                    )
-                    db = client.get_database()
+                    db = _get_mongo_client().get_database()
                     albums_collection = db['albums']
 
                     safe_metadata = metadata or {}
@@ -740,9 +766,17 @@ def rip_cd_stream(request):
                         object_key = f"audio/{mongo_user_id}/{artist_name}/{album_title}/{os.path.basename(str(path))}"
                         with open(_dbg, 'a') as _f:
                             _f.write(f"[{datetime.now()}] Uploading track {track_num} to R2: {os.path.basename(str(path))}\n")
-                        audio_url = _upload_to_r2(str(path), object_key)
-                        with open(_dbg, 'a') as _f:
-                            _f.write(f"[{datetime.now()}] Track {track_num} upload done: {audio_url[:60]}\n")
+                        yield f"data: {json.dumps({'type': 'cloud_upload', 'track_number': track_num, 'stage': 'uploading'})}\n\n"
+                        try:
+                            audio_url = _upload_to_r2(str(path), object_key)
+                            with open(_dbg, 'a') as _f:
+                                _f.write(f"[{datetime.now()}] Track {track_num} upload done: {audio_url[:60]}\n")
+                            yield f"data: {json.dumps({'type': 'cloud_upload', 'track_number': track_num, 'stage': 'done', 'url': audio_url})}\n\n"
+                        except Exception as _upload_err:
+                            with open(_dbg, 'a') as _f:
+                                _f.write(f"[{datetime.now()}] Track {track_num} upload ERROR: {_upload_err}\n")
+                            yield f"data: {json.dumps({'type': 'cloud_upload', 'track_number': track_num, 'stage': 'error', 'message': str(_upload_err)})}\n\n"
+                            audio_url = str(path)  # fallback to local path
                         mongo_tracks.append({
                             'title': track_title,
                             'trackNumber': track_num,
@@ -772,6 +806,8 @@ def rip_cd_stream(request):
             # Final status
             if result_holder['error']:
                 yield f"data: {json.dumps({'type': 'error', 'message': result_holder['error']})}\n\n"
+            elif ripper._cancel_event.is_set():
+                yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'complete', 'tracks': result_holder['tracks'] or []})}\n\n"
         finally:
@@ -800,16 +836,21 @@ def cancel_rip(request):
     if not session_id:
         return JsonResponse({'error': 'session_id required'}, status=400)
 
-    with _rips_lock:
-        if session_id == '__all__':
-            # Cancel all active rips (used during app shutdown)
-            for sid, ripper in list(_active_rips.items()):
-                try:
-                    ripper.cancel()
-                except Exception as e:
-                    logger.warning(f"Error cancelling session {sid}: {e}")
-            return JsonResponse({'status': 'cancelled', 'sessions': len(_active_rips)})
+    if session_id == '__all__':
+        # Snapshot under lock, then cancel outside the lock so that
+        # ripper.cancel() (which kills a subprocess) cannot deadlock
+        # against generate_progress() trying to acquire _rips_lock.
+        with _rips_lock:
+            sessions_snapshot = list(_active_rips.items())
+            session_count = len(sessions_snapshot)
+        for sid, ripper in sessions_snapshot:
+            try:
+                ripper.cancel()
+            except Exception as e:
+                logger.warning(f"Error cancelling session {sid}: {e}")
+        return JsonResponse({'status': 'cancelled', 'sessions': session_count})
 
+    with _rips_lock:
         ripper = _active_rips.get(session_id)
 
     if not ripper:
@@ -820,7 +861,7 @@ def cancel_rip(request):
         return JsonResponse({'status': 'cancelled', 'session_id': session_id})
     except Exception as e:
         logger.error(f"Error cancelling rip {session_id}: {e}")
-        return JsonResponse({'error': str(e)}, status=500)
+        return JsonResponse({'error': 'Cancel failed'}, status=500)
 
 
 # --- MongoDB Direct Endpoints (for Desktop App) ---
@@ -830,6 +871,7 @@ def cancel_rip(request):
 @permission_classes([permissions.AllowAny])
 def mongo_delete_album(request, album_id):
     """Delete an album from MongoDB"""
+    from bson.errors import InvalidId
     user_id = request.query_params.get('user_id')
     if not user_id:
         return Response({'error': 'user_id required'}, status=400)
@@ -838,19 +880,19 @@ def mongo_delete_album(request, album_id):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = MongoClient(
-            settings.MONGODB_URI,
-            serverSelectionTimeoutMS=20000,
-            socketTimeoutMS=10000,
-            connectTimeoutMS=5000,
-        )
-        db = client.get_database()
+        album_oid = ObjectId(album_id)
+        user_oid = ObjectId(user_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid album_id or user_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         albums_collection = db['albums']
 
         # Delete only if album belongs to this user
         result = albums_collection.delete_one({
-            '_id': ObjectId(album_id),
-            'user': ObjectId(user_id)
+            '_id': album_oid,
+            'user': user_oid
         })
 
         if result.deleted_count == 0:
@@ -859,7 +901,7 @@ def mongo_delete_album(request, album_id):
         return Response({'status': 'deleted'})
     except Exception as e:
         logger.error(f"MongoDB delete failed: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Delete failed'}, status=500)
 
 
 @api_view(['DELETE'])
@@ -867,14 +909,21 @@ def mongo_delete_album(request, album_id):
 @permission_classes([permissions.AllowAny])
 def mongo_delete_track(request, album_id, track_number):
     """Remove a single track from an album by track number."""
+    from bson.errors import InvalidId
     user_id = request.query_params.get('user_id')
     if not user_id:
         return Response({'error': 'user_id required'}, status=400)
+
     try:
-        client = _get_mongo_client()
-        db = client.get_database()
+        album_oid = ObjectId(album_id)
+        user_oid = ObjectId(user_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid album_id or user_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         result = db['albums'].update_one(
-            {'_id': ObjectId(album_id), 'user': ObjectId(user_id)},
+            {'_id': album_oid, 'user': user_oid},
             {'$pull': {'tracks': {'trackNumber': track_number}}}
         )
         if result.matched_count == 0:
@@ -882,7 +931,7 @@ def mongo_delete_track(request, album_id, track_number):
         return Response({'status': 'deleted'})
     except Exception as e:
         logger.error(f"mongo_delete_track failed: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Delete failed'}, status=500)
 
 
 @api_view(['PATCH'])
@@ -890,6 +939,7 @@ def mongo_delete_track(request, album_id, track_number):
 @permission_classes([permissions.AllowAny])
 def mongo_update_album(request, album_id):
     """Update title, artist, and/or coverArt on a locally imported album."""
+    from bson.errors import InvalidId
     user_id = request.data.get('user_id')
     if not user_id:
         return Response({'error': 'user_id required'}, status=400)
@@ -906,10 +956,15 @@ def mongo_update_album(request, album_id):
         return Response({'error': 'Nothing to update'}, status=400)
 
     try:
-        client = _get_mongo_client()
-        db = client.get_database()
+        album_oid = ObjectId(album_id)
+        user_oid = ObjectId(user_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid album_id or user_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         result = db['albums'].update_one(
-            {'_id': ObjectId(album_id), 'user': ObjectId(user_id), 'source': 'local_import'},
+            {'_id': album_oid, 'user': user_oid, 'source': 'local_import'},
             {'$set': updates}
         )
         if result.matched_count == 0:
@@ -917,7 +972,7 @@ def mongo_update_album(request, album_id):
         return Response({'status': 'updated'})
     except Exception as e:
         logger.error(f"mongo_update_album failed: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Update failed'}, status=500)
 
 
 @api_view(['POST'])
@@ -938,13 +993,7 @@ def mongo_import_local(request):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = MongoClient(
-            settings.MONGODB_URI,
-            serverSelectionTimeoutMS=20000,
-            socketTimeoutMS=10000,
-            connectTimeoutMS=5000,
-        )
-        db = client.get_database()
+        db = _get_mongo_client().get_database()
         albums_collection = db['albums']
 
         new_album = {
@@ -966,7 +1015,7 @@ def mongo_import_local(request):
         })
     except Exception as e:
         logger.error(f"MongoDB import failed: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Import failed'}, status=500)
 
 
 @api_view(['GET'])
@@ -974,6 +1023,7 @@ def mongo_import_local(request):
 @permission_classes([permissions.AllowAny])
 def mongo_library(request):
     """Fetch library directly from MongoDB for desktop app"""
+    from bson.errors import InvalidId
     user_id = request.query_params.get('user_id')
     if not user_id:
         return Response({'error': 'user_id required'}, status=400)
@@ -982,16 +1032,15 @@ def mongo_library(request):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = MongoClient(
-            settings.MONGODB_URI,
-            serverSelectionTimeoutMS=20000,
-            socketTimeoutMS=10000,
-            connectTimeoutMS=5000,
-        )
-        db = client.get_database()
+        user_oid = ObjectId(user_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid user_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         albums_collection = db['albums']
 
-        albums = list(albums_collection.find({'user': ObjectId(user_id)}).sort('createdAt', -1))
+        albums = list(albums_collection.find({'user': user_oid}).sort('createdAt', -1))
 
         # Convert ObjectId to string for JSON serialization
         for album in albums:
@@ -1004,7 +1053,7 @@ def mongo_library(request):
         return Response(albums)
     except Exception as e:
         logger.error(f"MongoDB library fetch failed: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Library fetch failed'}, status=500)
 
 
 @api_view(['GET'])
@@ -1019,19 +1068,24 @@ def mongo_stats(request):
     if not settings.MONGODB_URI:
         return Response({'total_albums': 0, 'total_tracks': 0, 'recent_albums': []})
 
+    from bson.errors import InvalidId
     try:
-        client = MongoClient(settings.MONGODB_URI, serverSelectionTimeoutMS=20000)
-        db = client.get_database()
+        user_oid = ObjectId(user_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid user_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         albums_collection = db['albums']
 
         # Get albums for this user
-        albums = list(albums_collection.find({'user': ObjectId(user_id)}))
+        albums = list(albums_collection.find({'user': user_oid}))
 
         total_albums = len(albums)
         total_tracks = sum(len(a.get('tracks', [])) for a in albums)
 
         # Recent albums (last 5)
-        recent = albums_collection.find({'user': ObjectId(user_id)}).sort('createdAt', -1).limit(5)
+        recent = albums_collection.find({'user': user_oid}).sort('createdAt', -1).limit(5)
         recent_albums = []
         for album in recent:
             recent_albums.append({
@@ -1085,7 +1139,6 @@ def _resolve_jwt(request):
         return None, JsonResponse({'error': 'Invalid token'}, status=401)
 
 
-@csrf_exempt
 @api_view(['POST'])
 @authentication_classes([])
 @permission_classes([permissions.AllowAny])
@@ -1369,6 +1422,7 @@ def _resolve_smart_rule(user_id, rule, albums_col):
 @permission_classes([permissions.AllowAny])
 def mongo_playlists(request):
     """List all playlists for a user (GET) or create a new one (POST)."""
+    from bson.errors import InvalidId
     user_id = request.query_params.get('user_id') or (request.data.get('user_id') if request.method == 'POST' else None)
     if not user_id:
         return Response({'error': 'user_id required'}, status=400)
@@ -1376,8 +1430,12 @@ def mongo_playlists(request):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = _get_mongo_client()
-        db = client.get_database()
+        ObjectId(user_id)  # validate before any DB call
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid user_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         playlists_col = db['playlists']
         albums_col = db['albums']
 
@@ -1414,7 +1472,7 @@ def mongo_playlists(request):
         return Response(_serialize_playlist(doc, full=True), status=201)
     except Exception as e:
         logger.error(f"mongo_playlists error: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Playlist operation failed'}, status=500)
 
 
 @api_view(['GET', 'PATCH', 'DELETE'])
@@ -1422,6 +1480,7 @@ def mongo_playlists(request):
 @permission_classes([permissions.AllowAny])
 def mongo_playlist_detail(request, playlist_id):
     """Get, update, or delete a single playlist."""
+    from bson.errors import InvalidId
     user_id = request.query_params.get('user_id') or request.data.get('user_id')
     if not user_id:
         return Response({'error': 'user_id required'}, status=400)
@@ -1429,11 +1488,15 @@ def mongo_playlist_detail(request, playlist_id):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = _get_mongo_client()
-        db = client.get_database()
+        playlist_oid = ObjectId(playlist_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid playlist_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         playlists_col = db['playlists']
 
-        playlist = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        playlist = playlists_col.find_one({'_id': playlist_oid})
         if not playlist:
             return Response({'error': 'Playlist not found'}, status=404)
         if str(playlist['user']) != user_id:
@@ -1443,7 +1506,7 @@ def mongo_playlist_detail(request, playlist_id):
             return Response(_serialize_playlist(playlist, full=True))
 
         if request.method == 'DELETE':
-            playlists_col.delete_one({'_id': ObjectId(playlist_id)})
+            playlists_col.delete_one({'_id': playlist_oid})
             return Response({'status': 'deleted'})
 
         # PATCH — update fields
@@ -1455,12 +1518,12 @@ def mongo_playlist_detail(request, playlist_id):
             updates['description'] = data['description']
         if 'items' in data:
             updates['items'] = data['items']
-        playlists_col.update_one({'_id': ObjectId(playlist_id)}, {'$set': updates})
-        updated = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        playlists_col.update_one({'_id': playlist_oid}, {'$set': updates})
+        updated = playlists_col.find_one({'_id': playlist_oid})
         return Response(_serialize_playlist(updated, full=True))
     except Exception as e:
         logger.error(f"mongo_playlist_detail error: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Playlist operation failed'}, status=500)
 
 
 @api_view(['POST'])
@@ -1468,6 +1531,7 @@ def mongo_playlist_detail(request, playlist_id):
 @permission_classes([permissions.AllowAny])
 def mongo_playlist_items(request, playlist_id):
     """Append items to a playlist."""
+    from bson.errors import InvalidId
     user_id = request.data.get('user_id')
     if not user_id:
         return Response({'error': 'user_id required'}, status=400)
@@ -1475,11 +1539,15 @@ def mongo_playlist_items(request, playlist_id):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = _get_mongo_client()
-        db = client.get_database()
+        playlist_oid = ObjectId(playlist_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid playlist_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         playlists_col = db['playlists']
 
-        playlist = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        playlist = playlists_col.find_one({'_id': playlist_oid})
         if not playlist:
             return Response({'error': 'Playlist not found'}, status=404)
         if str(playlist['user']) != user_id:
@@ -1487,17 +1555,17 @@ def mongo_playlist_items(request, playlist_id):
 
         new_items = request.data.get('items', [])
         playlists_col.update_one(
-            {'_id': ObjectId(playlist_id)},
+            {'_id': playlist_oid},
             {
                 '$push': {'items': {'$each': new_items}},
                 '$set': {'updatedAt': datetime.now()},
             }
         )
-        updated = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        updated = playlists_col.find_one({'_id': playlist_oid})
         return Response(_serialize_playlist(updated, full=True))
     except Exception as e:
         logger.error(f"mongo_playlist_items error: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Playlist update failed'}, status=500)
 
 
 @api_view(['DELETE'])
@@ -1505,6 +1573,7 @@ def mongo_playlist_items(request, playlist_id):
 @permission_classes([permissions.AllowAny])
 def mongo_playlist_item_delete(request, playlist_id, item_index):
     """Remove a single item from a playlist by index."""
+    from bson.errors import InvalidId
     user_id = request.query_params.get('user_id')
     if not user_id:
         return Response({'error': 'user_id required'}, status=400)
@@ -1512,11 +1581,15 @@ def mongo_playlist_item_delete(request, playlist_id, item_index):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = _get_mongo_client()
-        db = client.get_database()
+        playlist_oid = ObjectId(playlist_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid playlist_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         playlists_col = db['playlists']
 
-        playlist = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        playlist = playlists_col.find_one({'_id': playlist_oid})
         if not playlist:
             return Response({'error': 'Playlist not found'}, status=404)
         if str(playlist['user']) != user_id:
@@ -1528,14 +1601,14 @@ def mongo_playlist_item_delete(request, playlist_id, item_index):
 
         items.pop(item_index)
         playlists_col.update_one(
-            {'_id': ObjectId(playlist_id)},
+            {'_id': playlist_oid},
             {'$set': {'items': items, 'updatedAt': datetime.now()}}
         )
-        updated = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        updated = playlists_col.find_one({'_id': playlist_oid})
         return Response(_serialize_playlist(updated, full=True))
     except Exception as e:
         logger.error(f"mongo_playlist_item_delete error: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Delete failed'}, status=500)
 
 
 @api_view(['POST'])
@@ -1543,6 +1616,7 @@ def mongo_playlist_item_delete(request, playlist_id, item_index):
 @permission_classes([permissions.AllowAny])
 def mongo_playlist_refresh(request, playlist_id):
     """Re-run a smart playlist's rule and replace items."""
+    from bson.errors import InvalidId
     user_id = request.data.get('user_id')
     if not user_id:
         return Response({'error': 'user_id required'}, status=400)
@@ -1550,12 +1624,16 @@ def mongo_playlist_refresh(request, playlist_id):
         return Response({'error': 'MongoDB not configured'}, status=500)
 
     try:
-        client = _get_mongo_client()
-        db = client.get_database()
+        playlist_oid = ObjectId(playlist_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid playlist_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         playlists_col = db['playlists']
         albums_col = db['albums']
 
-        playlist = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        playlist = playlists_col.find_one({'_id': playlist_oid})
         if not playlist:
             return Response({'error': 'Playlist not found'}, status=404)
         if str(playlist['user']) != user_id:
@@ -1565,14 +1643,14 @@ def mongo_playlist_refresh(request, playlist_id):
 
         items = _resolve_smart_rule(user_id, playlist['smartRule'], albums_col)
         playlists_col.update_one(
-            {'_id': ObjectId(playlist_id)},
+            {'_id': playlist_oid},
             {'$set': {'items': items, 'updatedAt': datetime.now()}}
         )
-        updated = playlists_col.find_one({'_id': ObjectId(playlist_id)})
+        updated = playlists_col.find_one({'_id': playlist_oid})
         return Response(_serialize_playlist(updated, full=True))
     except Exception as e:
         logger.error(f"mongo_playlist_refresh error: {e}")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Refresh failed'}, status=500)
 
 
 @api_view(['POST'])
@@ -1608,11 +1686,16 @@ def mongo_update_track_urls(request):
     if not mongo_user_id:
         return Response({'error': 'mongo_user_id required'}, status=400)
 
+    from bson.errors import InvalidId
     try:
-        client = _get_mongo_client()
-        db = client.get_database()
+        album_oid = ObjectId(album_id)
+    except (InvalidId, Exception):
+        return Response({'error': 'Invalid album_id'}, status=400)
+
+    try:
+        db = _get_mongo_client().get_database()
         albums_col = db['albums']
-        album = albums_col.find_one({'_id': ObjectId(album_id)})
+        album = albums_col.find_one({'_id': album_oid})
         if not album:
             with open(_log, 'a') as _f:
                 _f.write(f"[{datetime.now()}] update-track-urls: album {album_id} NOT FOUND\n")
@@ -1642,7 +1725,7 @@ def mongo_update_track_urls(request):
             num = t.get('trackNumber', 0)
             updated_tracks.append({**t, 'audioFile': track_map.get(num, t.get('audioFile', ''))})
 
-        albums_col.update_one({'_id': ObjectId(album_id)}, {'$set': {'tracks': updated_tracks}})
+        albums_col.update_one({'_id': album_oid}, {'$set': {'tracks': updated_tracks}})
         with open(_log, 'a') as _f:
             _f.write(f"[{datetime.now()}] update-track-urls SUCCESS: {len(updated_tracks)} tracks patched for album {album_id}\n")
         return Response({'ok': True, 'patched': len(track_map)})
@@ -1650,4 +1733,4 @@ def mongo_update_track_urls(request):
         logger.error(f"mongo_update_track_urls error: {e}")
         with open(_log, 'a') as _f:
             _f.write(f"[{datetime.now()}] update-track-urls ERROR: {e}\n")
-        return Response({'error': str(e)}, status=500)
+        return Response({'error': 'Track URL update failed'}, status=500)

@@ -56,6 +56,26 @@ const PLAY_COUNTS_KEY = "dizc_play_counts";
 const VOLUME_KEY = "dizc_volume";
 const MAX_RECENTLY_PLAYED = 20;
 
+// ─── Audio graph constants ────────────────────────────────────────────────────
+// Logarithmic volume curve: gain = v^2 gives perceptually linear loudness
+// (doubles perceived loudness every ~6 dB, matching how ears work).
+// At v=1.0 → gain=1.0; v=0.5 → gain=0.25 (~−12 dBFS); v=0.0 → gain=0.0.
+function linearToGain(linearVolume: number): number {
+    return linearVolume * linearVolume;
+}
+
+// Preload window: start buffering next track this many seconds before end.
+// 20 s gives plenty of time even on a slow R2 connection.
+const PRELOAD_AHEAD_SECONDS = 20;
+
+// Crossfade duration in seconds for smooth track transitions.
+// 0.08 s (80 ms) is inaudible as a gap-filler but avoids any click at the
+// transition point. True crossfade (overlapping audio) is not used here because
+// it would require decoding the next track into an AudioBufferSourceNode, which
+// is expensive for long MP3 files. Instead we fade out the tail and fade in the
+// start over 80 ms using the GainNode ramp API.
+const CROSSFADE_DURATION = 0.08;
+
 function getTrackKey(track: Track, albumInfo?: AlbumInfo | null): string {
     return `${track.title}::${albumInfo?.artist ?? ""}`;
 }
@@ -103,8 +123,39 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const [sleepMinutes, setSleepMinutesState] = useState<number | null>(null);
     const [shuffleQueue, setShuffleQueue] = useState<Track[]>([]);
 
-    // Refs for the audio element and stale-closure-safe state
+    // ─── Audio element refs ───────────────────────────────────────────────────
+    // We use a HTMLAudioElement (not AudioBufferSourceNode) because:
+    //   1. Supports streaming HTTP range requests — no need to buffer the entire
+    //      file before playback starts.
+    //   2. Reuses existing URL/src event model without changes.
+    //   3. Works with Electron's localfile:// protocol handler out of the box.
+    // The element is routed through an AudioContext graph via MediaElementSourceNode
+    // for proper gain staging and dynamics processing.
     const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // ─── Web Audio API graph refs ─────────────────────────────────────────────
+    // Graph: audioElement → MediaElementSourceNode → GainNode → DynamicsCompressorNode → destination
+    //
+    // GainNode: logarithmic volume control. Raw HTMLAudioElement.volume is linear
+    //   which sounds wrong on a slider. Gain = v^2 gives perceptually even steps.
+    //
+    // DynamicsCompressorNode (soft limiter): prevents inter-track loudness jumps
+    //   from causing digital clipping (output > 0 dBFS). Settings:
+    //     threshold: -1 dBFS — only engages when signal is nearly full scale
+    //     knee:       0 dB  — hard knee, no soft saturation (limiter, not compressor)
+    //     ratio:      20:1  — heavy gain reduction above threshold (limiter behaviour)
+    //     attack:     0.003 s — 3 ms attack: fast enough to catch transients
+    //     release:    0.25 s — 250 ms release: short enough not to pump
+    //
+    // One MediaElementSourceNode is created per Audio element. A single element
+    // can only be connected to one context at a time, so we track the node ref.
+    const audioCtxRef = useRef<AudioContext | null>(null);
+    const gainNodeRef = useRef<GainNode | null>(null);
+    const limiterRef = useRef<DynamicsCompressorNode | null>(null);
+    const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+    // Whether the AudioContext has been started via a user gesture
+    const audioCtxStartedRef = useRef(false);
+
     const currentTrackRef = useRef<Track | null>(null);
     const currentAlbumRef = useRef<AlbumInfo | null>(null);
     const queueRef = useRef<Track[]>([]);
@@ -120,7 +171,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // Volume ref (always tracks latest user volume, avoids stale closures)
     const fadeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const volumeRef = useRef(volume);
-    // Second audio element used to pre-buffer the next track for gapless playback
+    // Second audio element used to pre-buffer the next track for gapless playback.
+    // When the primary element ends, if this secondary element has the correct
+    // src and readyState >= HAVE_FUTURE_DATA (3), we swap them rather than doing
+    // a fresh network load, eliminating the gap.
     const preloadRef = useRef<HTMLAudioElement | null>(null);
     const preloadedSrcRef = useRef<string | null>(null);
     // Pre-generated shuffled track order — lets us know exactly what comes next
@@ -164,10 +218,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         let next: Track | undefined;
 
         if (shuffleModeRef.current) {
-            // Use the pre-generated shuffle queue — next track is always known
             const sq = shuffleQueueRef.current;
             const nextIdx = shuffleIndexRef.current + 1;
-            if (nextIdx >= sq.length) return null; // end of shuffle queue
+            if (nextIdx >= sq.length) return null;
             next = sq[nextIdx];
         } else {
             const track = currentTrackRef.current;
@@ -196,6 +249,81 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return af;
     }
 
+    // ─── AudioContext bootstrap ───────────────────────────────────────────────
+    // AudioContext must be created (or resumed) inside a user gesture handler.
+    // We create it lazily on the first play action and keep it alive for the
+    // entire session. A single suspended context is fine — we call resume()
+    // inside every user-initiated play path.
+    function ensureAudioContext(): AudioContext {
+        if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+            return audioCtxRef.current;
+        }
+
+        const ctx = new AudioContext({
+            // Request a low-latency profile. On most desktop hardware this gives
+            // 128–512 sample buffers (~3–12 ms). The browser may ignore this
+            // hint on low-power devices.
+            latencyHint: "playback",
+            // Do not hardcode a sample rate — let the browser match the hardware.
+            // Forcing 44100 on a 48000 Hz output device causes the OS to add a
+            // software resampler, which degrades quality unnecessarily.
+        });
+
+        // GainNode for logarithmic volume control
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = linearToGain(volumeRef.current);
+
+        // DynamicsCompressorNode as a transparent soft limiter.
+        // Engages only above -1 dBFS to prevent clipping without audible
+        // compression on normal-level material.
+        const limiter = ctx.createDynamicsCompressor();
+        limiter.threshold.value = -1;   // dBFS: only limit near full scale
+        limiter.knee.value = 0;          // hard knee = limiter behaviour
+        limiter.ratio.value = 20;        // 20:1 = limiter (not compressor)
+        limiter.attack.value = 0.003;    // 3 ms: fast enough to catch transients
+        limiter.release.value = 0.25;    // 250 ms: short enough not to pump
+
+        // Wire: GainNode → Limiter → Speakers
+        gainNode.connect(limiter);
+        limiter.connect(ctx.destination);
+
+        audioCtxRef.current = ctx;
+        gainNodeRef.current = gainNode;
+        limiterRef.current = limiter;
+
+        return ctx;
+    }
+
+    // Connect an HTMLAudioElement into the AudioContext graph.
+    // Each element gets exactly one MediaElementSourceNode — creating a second
+    // one on the same element throws an InvalidStateError, so we guard against
+    // reconnecting the same element.
+    function connectElementToGraph(el: HTMLAudioElement): void {
+        const ctx = audioCtxRef.current;
+        const gainNode = gainNodeRef.current;
+        if (!ctx || !gainNode) return;
+
+        // If this element is already the connected source, nothing to do.
+        if (sourceNodeRef.current) {
+            // Check if the source is for this element (no direct API for this,
+            // so we track it via a WeakMap-style expando property).
+            const tracked = (el as unknown as Record<string, unknown>).__audioCtxConnected;
+            if (tracked === ctx) return;
+        }
+
+        // Disconnect any previous source node from the graph before creating a new one.
+        if (sourceNodeRef.current) {
+            try { sourceNodeRef.current.disconnect(); } catch { /* already disconnected */ }
+            sourceNodeRef.current = null;
+        }
+
+        const sourceNode = ctx.createMediaElementSource(el);
+        sourceNode.connect(gainNode);
+        sourceNodeRef.current = sourceNode;
+        // Tag the element so we know it's been connected to this context
+        (el as unknown as Record<string, unknown>).__audioCtxConnected = ctx;
+    }
+
     // Keep refs in sync with state
     useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
     useEffect(() => { currentAlbumRef.current = currentAlbum; }, [currentAlbum]);
@@ -214,7 +342,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     const addToRecentlyPlayed = useCallback((track: Track, albumInfo: AlbumInfo | null) => {
         setRecentlyPlayed(prev => {
-            // Remove any existing entry for this track (dedup by title)
             const filtered = prev.filter(e => e.track.title !== track.title);
             const next = [{ track, albumInfo, playedAt: Date.now() }, ...filtered].slice(0, MAX_RECENTLY_PLAYED);
             saveToStorage(RECENTLY_PLAYED_KEY, next);
@@ -273,13 +400,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setCurrentAlbum(albumInfo);
         currentAlbumRef.current = albumInfo;
 
-        // Keep shuffle queue in sync ─────────────────────────────────────────
+        // Keep shuffle queue in sync
         if (shuffleModeRef.current) {
             if (resolvedQueue !== queueRef.current) {
-                // New source (different album/playlist) — build a fresh shuffle order
                 generateShuffleQueue(resolvedQueue, track);
             } else {
-                // Same queue — just move the pointer to where we are now
                 const idx = shuffleQueueRef.current.findIndex(t => t.audio_file === audioFile);
                 if (idx !== -1) shuffleIndexRef.current = idx;
             }
@@ -299,8 +424,24 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             fadeTimerRef.current = null;
         }
 
-        // If we're switching away from what was preloaded, reset so the next
-        // preload cycle picks the correct upcoming track.
+        // ── Bootstrap AudioContext on first play (must be inside a user gesture) ─
+        // ensureAudioContext() is idempotent — safe to call every time.
+        const ctx = ensureAudioContext();
+
+        // Resume if the context was suspended by the browser's autoplay policy.
+        // This is a no-op if it's already running.
+        if (ctx.state === "suspended") {
+            ctx.resume().catch(e => console.warn("[Player] AudioContext resume failed:", e));
+        }
+        audioCtxStartedRef.current = true;
+
+        // ── Gapless swap: if the preload element already has this src buffered,
+        //    and the audio graph is connected to the primary element, we need to
+        //    keep using the primary element (MediaElementSourceNode is 1:1 with
+        //    the element). The preload buffer is HTTP-level only — the browser's
+        //    cache means when we set audio.src to the same URL the preloaded
+        //    element was fetching, the data comes from cache instantly.
+        //    This avoids any network stall at track boundaries. ────────────────
         if (preloadedSrcRef.current !== src) {
             preloadedSrcRef.current = null;
         }
@@ -308,8 +449,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         console.log("[Player] Playing src:", src);
 
         isTransitioningRef.current = true;
-        audio.volume = volumeRef.current;
+
+        // Apply a very short fade-out on the GainNode to avoid a click at the
+        // cut point (80 ms). This is inaudible as a gap but eliminates the hard
+        // click caused by an abrupt waveform discontinuity when src changes.
+        if (gainNodeRef.current && ctx.state === "running") {
+            const now = ctx.currentTime;
+            gainNodeRef.current.gain.cancelScheduledValues(now);
+            gainNodeRef.current.gain.setValueAtTime(gainNodeRef.current.gain.value, now);
+            gainNodeRef.current.gain.linearRampToValueAtTime(0, now + CROSSFADE_DURATION);
+        }
+
+        // Set the new source. The browser will load from cache if the preload
+        // element already fetched this URL (same-origin or CORS-cached).
         audio.src = src;
+
+        // Fade the gain back in once canplay fires (handled in handleCanPlay).
+        // We set a flag so canplay knows to ramp up.
+        (audio as unknown as Record<string, unknown>).__pendingFadeIn = true;
+
         audio.play().catch(e => {
             isTransitioningRef.current = false;
             if (e.name !== "AbortError") console.error("[Player] Playback failed:", e);
@@ -325,7 +483,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (!track) return;
 
-        // Repeat one — restart current track
         if (repeatModeRef.current === "one") {
             if (audioRef.current) {
                 audioRef.current.currentTime = 0;
@@ -338,7 +495,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (q.length === 0) return;
 
-        // Shuffle — advance through the pre-generated shuffle queue
         if (shuffleModeRef.current) {
             const sq = shuffleQueueRef.current;
             const nextIdx = shuffleIndexRef.current + 1;
@@ -346,7 +502,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 shuffleIndexRef.current = nextIdx;
                 playTrackInternal(sq[nextIdx], resolveAlbum(sq[nextIdx], album), q);
             } else if (repeatModeRef.current === "all") {
-                // Finished the shuffle queue — reshuffle and loop
                 generateShuffleQueue(q, null);
                 const first = shuffleQueueRef.current[0];
                 if (first) playTrackInternal(first, resolveAlbum(first, album), q);
@@ -363,10 +518,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             const next = q[currentIndex + 1];
             playTrackInternal(next, resolveAlbum(next, album), q);
         } else if (repeatModeRef.current === "all") {
-            // Loop back to start
             playTrackInternal(q[0], resolveAlbum(q[0], album), q);
         } else {
-            // End of queue, stop
             setIsPlaying(false);
             setProgress(0);
         }
@@ -379,7 +532,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     // ─── Media Session API (lock screen / notification controls) ─────────────────
 
-    // Update metadata whenever the track or album changes
     useEffect(() => {
         if (!("mediaSession" in navigator)) return;
         if (!currentTrack) return;
@@ -397,13 +549,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         });
     }, [currentTrack, currentAlbum]);
 
-    // Sync playback state with the OS
     useEffect(() => {
         if (!("mediaSession" in navigator)) return;
         navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
     }, [isPlaying]);
 
-    // Update position state so the lock screen scrubber is accurate
     useEffect(() => {
         if (!("mediaSession" in navigator)) return;
         if (!duration || !isFinite(duration) || duration <= 0) return;
@@ -418,7 +568,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
     }, [progress, duration]);
 
-    // Register action handlers once on mount; read state through refs to avoid stale closures
     useEffect(() => {
         if (!("mediaSession" in navigator)) return;
 
@@ -434,7 +583,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             nextTrackFromRefsRef.current();
         });
         navigator.mediaSession.setActionHandler("previoustrack", () => {
-            // If more than 3 s in, restart; otherwise go to previous
             if (audioRef.current && audioRef.current.currentTime > 3) {
                 audioRef.current.currentTime = 0;
             } else {
@@ -469,52 +617,90 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // ─── Audio element setup ──────────────────────────────────────────────────────
 
     useEffect(() => {
-        audioRef.current = new Audio();
-        audioRef.current.preload = "auto";
-        audioRef.current.volume = loadFromStorage<number>(VOLUME_KEY, 1);
-        preloadRef.current = new Audio();
-        preloadRef.current.preload = "auto";
-        const audio = audioRef.current;
+        const audio = new Audio();
+        audio.preload = "auto";
+        // crossOrigin = "anonymous" is required so that the browser allows
+        // AudioContext to process the audio stream when the source is a
+        // cross-origin URL (e.g. R2 public URLs). Without this attribute the
+        // browser taints the media element and createMediaElementSource() throws
+        // a SecurityError. For localfile:// URLs this has no effect.
+        // NOTE: R2 bucket must serve Access-Control-Allow-Origin: * headers.
+        audio.crossOrigin = "anonymous";
+        audioRef.current = audio;
+
+        // Preload element: same CORS settings required so the browser shares the
+        // cache entry with the primary element (same-origin + CORS credentials
+        // must match for the HTTP cache key to match).
+        const preload = new Audio();
+        preload.preload = "auto";
+        preload.crossOrigin = "anonymous";
+        preload.volume = 0; // Never actually played — only used for prefetching
+        preloadRef.current = preload;
 
         const handleTimeUpdate = () => {
             setProgress(audio.currentTime);
             if (audio.duration && isFinite(audio.duration) && audio.duration > 0) {
                 setDuration(audio.duration);
 
-                // When within 15 s of the end, start buffering the next track so
-                // the transition is gapless (browser caches the data before it's needed).
+                // Kick off preloading when within PRELOAD_AHEAD_SECONDS of the end.
+                // Using a second Audio element means the browser starts fetching
+                // the next file's first chunks into its HTTP cache while the
+                // current track is still playing. When playTrackInternal later sets
+                // audio.src to the same URL, the browser serves it from cache —
+                // eliminating the network round-trip that causes gaps.
                 const remaining = audio.duration - audio.currentTime;
-                if (remaining > 0 && remaining < 15 && preloadRef.current) {
+                if (remaining > 0 && remaining < PRELOAD_AHEAD_SECONDS && preloadRef.current) {
                     const nextSrc = resolveNextSrc();
                     if (nextSrc && preloadedSrcRef.current !== nextSrc) {
                         preloadedSrcRef.current = nextSrc;
                         preloadRef.current.src = nextSrc;
                         preloadRef.current.load();
+                        console.log("[Player] Preloading next track:", nextSrc);
                     }
                 }
             }
         };
+
         const handleLoadedMetadata = () => {
-            console.log("[Player] Metadata loaded, duration:", audio.duration);
-            if (audio.duration && isFinite(audio.duration)) {
-                setDuration(audio.duration);
-            }
-        };
-        const handleDurationChange = () => {
-            console.log("[Player] Duration changed:", audio.duration);
-            if (audio.duration && isFinite(audio.duration)) {
-                setDuration(audio.duration);
-            }
-        };
-        const handleCanPlay = () => {
-            console.log("[Player] Can play, duration:", audio.duration);
             if (audio.duration && isFinite(audio.duration)) {
                 setDuration(audio.duration);
             }
         };
 
-        // Use refs to avoid stale closures — this handler is registered once at
-        // mount, so all mutable state is read through refs.
+        const handleDurationChange = () => {
+            if (audio.duration && isFinite(audio.duration)) {
+                setDuration(audio.duration);
+            }
+        };
+
+        const handleCanPlay = () => {
+            if (audio.duration && isFinite(audio.duration)) {
+                setDuration(audio.duration);
+            }
+
+            // If we scheduled a fade-in for this element (set by playTrackInternal),
+            // ramp the gain back up to the user's volume level now that audio data
+            // is ready. This completes the click-prevention crossfade.
+            const pendingFadeIn = (audio as unknown as Record<string, unknown>).__pendingFadeIn;
+            if (pendingFadeIn && gainNodeRef.current && audioCtxRef.current) {
+                const ctx = audioCtxRef.current;
+                const now = ctx.currentTime;
+                const targetGain = linearToGain(volumeRef.current);
+                gainNodeRef.current.gain.cancelScheduledValues(now);
+                gainNodeRef.current.gain.setValueAtTime(0, now);
+                gainNodeRef.current.gain.linearRampToValueAtTime(targetGain, now + CROSSFADE_DURATION);
+                (audio as unknown as Record<string, unknown>).__pendingFadeIn = false;
+            }
+
+            // Connect the audio element to the AudioContext graph if not already done.
+            // We do this here (not at element creation) because createMediaElementSource
+            // will throw if called before the AudioContext is initialised, and the
+            // context is only created on the first play() call.
+            if (audioCtxStartedRef.current) {
+                connectElementToGraph(audio);
+            }
+        };
+
         const handleEnded = () => {
             const track = currentTrackRef.current;
             const album = currentAlbumRef.current;
@@ -522,7 +708,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 incrementPlayCount(track, album);
                 addToRecentlyPlayed(track, album);
             }
-            // Call through the ref so we always invoke the latest version
             nextTrackFromRefsRef.current();
         };
 
@@ -535,58 +720,71 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             setIsLoading(false);
             setIsPlaying(false);
         };
+
         const handleWaiting = () => setIsLoading(true);
+
         const handlePlaying = () => {
             isTransitioningRef.current = false;
             setIsLoading(false);
             setError(null);
             setIsPlaying(true);
+
+            // Connect to audio graph if we missed canplay (e.g. src set before
+            // AudioContext was initialised and canplay already fired).
+            if (audioCtxStartedRef.current) {
+                connectElementToGraph(audio);
+            }
         };
-        // Sync isPlaying if the browser/OS pauses audio externally
-        // (e.g. another tab steals audio focus, headphones disconnect, mobile lock screen)
-        // Ignore pause events that fire as a side-effect of changing the src.
+
         const handlePause = () => {
             if (isTransitioningRef.current) return;
             setIsPlaying(false);
         };
 
-        // Browser paused the download (e.g. buffered enough, or network idle).
-        // No action needed — playback continues from the buffer; keep UI state as-is.
-        const handleSuspend = () => {
-            // If audio is unexpectedly paused while we think we're playing, the
-            // handlePause listener already handles state sync. Nothing more to do.
-        };
+        // Browser suspended the download — not an error, keep UI state as-is.
+        const handleSuspend = () => {};
 
-        // Network stall — no data arriving. Wait 3 s then try to recover by
-        // re-seeking to the current position, which re-triggers buffering.
-        // This fires whether the audio is paused or not (it can stall while
-        // technically still in a "playing" state), so don't gate on paused.
+        // Network stall recovery. The reliable fix is to save the position,
+        // reload the element, and seek back. Simply setting currentTime on a
+        // stalled element does nothing in some Chromium versions.
         const handleStalled = () => {
             if (audioRef.current !== audio) return;
-            const currentTime = audio.currentTime;
+            const savedSrc = audio.src;
+            const savedTime = audio.currentTime;
+            const wasPaused = audio.paused;
+
+            // Wait 3 s before intervening — transient stalls recover on their own.
             setTimeout(() => {
-                if (audioRef.current !== audio) return;
-                try { audio.currentTime = currentTime; } catch { /* ignore */ }
-                if (!audio.paused) {
-                    audio.play().catch(() => {});
-                }
+                if (audioRef.current !== audio || audio.src !== savedSrc) return;
+                // Only intervene if still stalled (readyState < HAVE_FUTURE_DATA)
+                if (audio.readyState >= 3) return;
+
+                console.warn("[Player] Stall detected, reloading from:", savedTime.toFixed(2));
+                try {
+                    audio.load();
+                    audio.currentTime = savedTime;
+                    if (!wasPaused) {
+                        audio.play().catch(() => {});
+                    }
+                } catch { /* ignore */ }
             }, 3000);
         };
 
-        // The media load was aborted (e.g. src changed mid-load).
-        // Ignore aborts that are caused by our own track-switch transitions.
         const handleAbort = () => {
             if (isTransitioningRef.current) return;
             setIsLoading(false);
             setIsPlaying(false);
         };
 
-        // Some Electron versions pause audio when the window is hidden.
-        // On becoming visible again, sync React state with actual audio state.
+        // Electron may pause audio when the window is hidden. Re-sync on visible.
         const handleVisibilityChange = () => {
             if (document.visibilityState === "visible" && audioRef.current) {
                 if (!audioRef.current.paused) {
                     setIsPlaying(true);
+                }
+                // Resume AudioContext if the OS suspended it while in background
+                if (audioCtxRef.current?.state === "suspended") {
+                    audioCtxRef.current.resume().catch(() => {});
                 }
             }
         };
@@ -607,10 +805,30 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         return () => {
             audio.pause();
+            audio.src = "";
             if (preloadRef.current) {
                 preloadRef.current.src = "";
                 preloadRef.current = null;
             }
+            // Tear down the AudioContext graph
+            if (sourceNodeRef.current) {
+                try { sourceNodeRef.current.disconnect(); } catch { /* ignore */ }
+                sourceNodeRef.current = null;
+            }
+            if (gainNodeRef.current) {
+                try { gainNodeRef.current.disconnect(); } catch { /* ignore */ }
+                gainNodeRef.current = null;
+            }
+            if (limiterRef.current) {
+                try { limiterRef.current.disconnect(); } catch { /* ignore */ }
+                limiterRef.current = null;
+            }
+            if (audioCtxRef.current) {
+                audioCtxRef.current.close().catch(() => {});
+                audioCtxRef.current = null;
+            }
+            audioCtxStartedRef.current = false;
+
             audio.removeEventListener("timeupdate", handleTimeUpdate);
             audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
             audio.removeEventListener("durationchange", handleDurationChange);
@@ -625,7 +843,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             audio.removeEventListener("abort", handleAbort);
             document.removeEventListener("visibilitychange", handleVisibilityChange);
         };
-        // nextTrackFromRefs and incrementPlayCount/addToRecentlyPlayed are stable useCallback refs
+        // Stable references — intentionally empty dependency array.
+        // All mutable state is accessed via refs inside the handlers.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -636,8 +855,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setVolumeState(clamped);
         volumeRef.current = clamped;
         saveToStorage(VOLUME_KEY, clamped);
-        if (audioRef.current) {
-            audioRef.current.volume = clamped;
+
+        // Apply volume through the AudioContext GainNode using a logarithmic curve.
+        // gain = v^2 maps the linear slider value to a perceptually even loudness
+        // progression (each 10% slider step sounds like the same perceptual jump).
+        if (gainNodeRef.current && audioCtxRef.current) {
+            const targetGain = linearToGain(clamped);
+            const now = audioCtxRef.current.currentTime;
+            // Short 10 ms ramp prevents zipper noise (clicking) from abrupt gain changes
+            gainNodeRef.current.gain.cancelScheduledValues(now);
+            gainNodeRef.current.gain.setValueAtTime(gainNodeRef.current.gain.value, now);
+            gainNodeRef.current.gain.linearRampToValueAtTime(targetGain, now + 0.01);
+        } else {
+            // AudioContext not yet initialised (before first play) — fall back to
+            // element volume so the mute/volume slider still works immediately.
+            if (audioRef.current) {
+                audioRef.current.volume = clamped;
+            }
         }
     };
 
@@ -668,11 +902,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     const togglePlay = () => {
         if (!currentTrackRef.current) return;
+        const audio = audioRef.current;
+        if (!audio) return;
+
         if (isPlaying) {
-            audioRef.current?.pause();
+            audio.pause();
             // handlePause listener will set isPlaying(false)
         } else {
-            audioRef.current?.play().catch(e => console.error("Playback failed:", e));
+            // Resume AudioContext before playing (handles autoplay policy re-suspensions)
+            if (audioCtxRef.current?.state === "suspended") {
+                audioCtxRef.current.resume().catch(() => {});
+            }
+            audio.play().catch(e => console.error("Playback failed:", e));
             // handlePlaying listener will set isPlaying(true)
         }
     };
@@ -688,7 +929,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (!track) return;
 
-        // If more than 3 seconds in, restart track
         if (audioRef.current && audioRef.current.currentTime > 3) {
             audioRef.current.currentTime = 0;
             return;
@@ -696,7 +936,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (q.length === 0) return;
 
-        // Shuffle — go back in the pre-generated shuffle queue
         if (shuffleModeRef.current) {
             const prevIdx = shuffleIndexRef.current - 1;
             if (prevIdx >= 0) {
@@ -704,7 +943,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 const prev = shuffleQueueRef.current[prevIdx];
                 playTrackInternal(prev, resolveAlbum(prev, album), q);
             }
-            // If already at the first track in the shuffle queue, do nothing
             return;
         }
 
@@ -713,7 +951,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             const prev = q[currentIndex - 1];
             playTrackInternal(prev, resolveAlbum(prev, album), q);
         } else if (repeatModeRef.current === "all") {
-            // Wrap to end
             const last = q[q.length - 1];
             playTrackInternal(last, resolveAlbum(last, album), q);
         }
@@ -749,7 +986,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
 
     const setSleepTimer = (minutes: number | null) => {
-        // Clear any existing timer
         if (sleepTimeoutRef.current !== null) {
             clearTimeout(sleepTimeoutRef.current);
             sleepTimeoutRef.current = null;
@@ -759,7 +995,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (minutes !== null && minutes > 0) {
             sleepTimeoutRef.current = setTimeout(() => {
-                // Pause playback
                 if (audioRef.current) {
                     audioRef.current.pause();
                 }

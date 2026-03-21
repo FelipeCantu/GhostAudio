@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 # Configure MusicBrainz
 musicbrainzngs.set_useragent("GhostAudio", "0.1", "https://github.com/ghost-audio")
+# Comply with MusicBrainz rate-limit policy: max 1 request/second.
+musicbrainzngs.set_rate_limit(1.0, 1)
 
 def send_mci_command(command_str):
     """Send an MCI command string to winmm.dll"""
@@ -84,30 +86,29 @@ def get_drive_toc(drive_letter):
         for i in range(first_track, last_track + 1):
             # Get position of track
             pos_str = send_mci_command(f"status {alias} position track {i}")
+            if not pos_str:
+                logger.error(f"MCI returned None for position of track {i}")
+                return None
             # Format is mm:ss:ff or similar. MCI usually returns "mm:ss:ff"
             # Parse it
             m, s, f = map(int, pos_str.replace(':', ' ').split())
             sectors = (m * 60 + s) * 75 + f
             track_offsets.append(sectors)
-            
-        # Get lead-out (start of next track after last)
-        # Often approximated by getting the length of the disc + start of disc?
-        # Or "length track <last>" + "position track <last>"
-        # "status <alias> length" returns total length
-        # Using "status <alias> position track <last+1>" is sometimes possible for leadout if it supports it, 
-        # but "length" of whole disc is safer + 150 frames (2 seconds pre-gap)
-        
+
         # A more reliable way for leadout in MCI:
         # Get length of the CD
         total_len_str = send_mci_command(f"status {alias} length")
+        if not total_len_str:
+            logger.error("MCI returned None for disc length")
+            return None
         tm, ts, tf = map(int, total_len_str.replace(':', ' ').split())
         total_sectors = (tm * 60 + ts) * 75 + tf
-        
-        # Leadout is usually Total Length + Start of First Track?
-        # Actually, MSF absolute time usually starts at 2 seconds (150 frames).
-        # But MCI 'length' might just be the duration.
+
         # Let's try: position of last track + length of last track
         last_len_str = send_mci_command(f"status {alias} length track {last_track}")
+        if not last_len_str:
+            logger.error(f"MCI returned None for length of last track {last_track}")
+            return None
         lm, ls, lf = map(int, last_len_str.replace(':', ' ').split())
         last_len_sectors = (lm * 60 + ls) * 75 + lf
 
@@ -322,31 +323,36 @@ def get_release_info(drive_letter):
         # includes=['recordings', 'artists'] gives us the tracks
         logger.info(f"Querying MusicBrainz for disc_id: {disc_id}")
         result = musicbrainzngs.get_releases_by_discid(disc_id, includes=['artists', 'recordings'])
-        
+
         # Parse the result to a friendly format
         if 'disc' in result and 'release-list' in result['disc']:
             releases = result['disc']['release-list']
             if releases:
-                release = releases[0] # Take the first match
+                release = releases[0]  # Take the first match
                 title = release.get('title', 'Unknown Album')
                 artist = "Unknown Artist"
-                if 'artist-credit' in release:
-                    artist = release['artist-credit'][0]['artist']['name']
-                
+                if 'artist-credit' in release and release['artist-credit']:
+                    first_credit = release['artist-credit'][0]
+                    # artist-credit entries can be plain strings (join phrases) or dicts
+                    if isinstance(first_credit, dict):
+                        artist = first_credit.get('artist', {}).get('name', 'Unknown Artist')
+
                 tracks = []
-                medium = release['medium-list'][0] # Assuming single disc
+                medium_list = release.get('medium-list', [])
+                medium = medium_list[0] if medium_list else {}
                 if 'track-list' in medium:
                     for trk in medium['track-list']:
-                        track_name = trk['recording']['title']
-                        track_num = trk['number']
-                        duration_ms = trk.get('length') # integer milliseconds
+                        recording = trk.get('recording', {})
+                        track_name = recording.get('title', f"Track {trk.get('number', '?')}")
+                        track_num = trk.get('number', '?')
+                        duration_ms = trk.get('length')  # integer milliseconds or None
                         tracks.append({
                             'track_number': track_num,
                             'title': track_name,
                             'artist': artist,
-                            'duration_ms': duration_ms
+                            'duration_ms': duration_ms or 0
                         })
-                
+
                 return {
                     'disc_id': disc_id,
                     'album': title,
@@ -415,7 +421,22 @@ def get_release_info(drive_letter):
             "cover_art": None
         }
 
-    return {"error": "No releases found in MusicBrainz", "disc_id": disc_id}
+    basic_tracks = []
+    for i in range(first, last + 1):
+        basic_tracks.append({
+            'track_number': str(i),
+            'title': f'Track {i}',
+            'artist': 'Unknown Artist',
+            'duration_ms': 0
+        })
+    return {
+        "error": "No releases found in MusicBrainz",
+        "disc_id": disc_id,
+        "album": "Unknown Album",
+        "artist": "Unknown Artist",
+        "tracks": basic_tracks,
+        "cover_art": None
+    }
 
 # Simulation/Fallback if needed for logic testing without a CD
 def simulate_metadata():

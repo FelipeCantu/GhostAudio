@@ -163,6 +163,23 @@ if (!gotTheLock) {
         };
         const contentType = mimeTypes[ext] || 'application/octet-stream';
 
+        // CORS headers: required so that AudioContext.createMediaElementSource()
+        // can process localfile:// streams. The Web Audio API spec requires the
+        // media element to pass CORS checks before it can be routed through an
+        // AudioContext. Without Access-Control-Allow-Origin the browser taints
+        // the element and createMediaElementSource() throws a SecurityError.
+        const corsHeaders = {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': 'Range, Content-Type',
+          'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+        };
+
+        // Handle preflight OPTIONS request
+        if (request.method === 'OPTIONS') {
+          return new Response(null, { status: 204, headers: corsHeaders });
+        }
+
         // Handle Range requests for seeking
         const rangeHeader = request.headers.get('Range');
         if (rangeHeader) {
@@ -176,6 +193,7 @@ if (!gotTheLock) {
             return new Response(stream, {
               status: 206,
               headers: {
+                ...corsHeaders,
                 'Content-Type': contentType,
                 'Content-Length': chunkSize.toString(),
                 'Content-Range': `bytes ${start}-${end}/${fileSize}`,
@@ -190,6 +208,7 @@ if (!gotTheLock) {
         return new Response(stream, {
           status: 200,
           headers: {
+            ...corsHeaders,
             'Content-Type': contentType,
             'Content-Length': fileSize.toString(),
             'Accept-Ranges': 'bytes'
