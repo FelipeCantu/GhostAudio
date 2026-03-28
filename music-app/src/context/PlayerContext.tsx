@@ -841,12 +841,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
                 console.warn("[Player] Stall detected, reloading from:", savedTime.toFixed(2));
                 try {
+                    // audio.load() fires an "abort" event synchronously; guard with
+                    // isTransitioningRef so handleAbort does not set isPlaying(false)
+                    // and kill playback while we are intentionally reloading.
+                    isTransitioningRef.current = true;
                     audio.load();
                     audio.currentTime = savedTime;
                     if (!wasPaused) {
                         audio.play().catch(() => {});
                     }
-                } catch { /* ignore */ }
+                    isTransitioningRef.current = false;
+                } catch {
+                    isTransitioningRef.current = false;
+                }
             }, 3000);
         };
 
