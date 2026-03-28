@@ -797,7 +797,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const handleWaiting = () => setIsLoading(true);
 
         const handlePlaying = () => {
-            isTransitioningRef.current = false;
+            // Defer clearing the transition guard by one macrotask. Chromium fires
+            // a spurious "pause" event in the same microtask flush as "playing"
+            // during src-change transitions (buffer pipeline briefly stalls before
+            // the first decoded frame). Clearing the flag synchronously here would
+            // let that spurious pause reach handlePause and set isPlaying(false),
+            // producing the play-stop-play stutter on automatic track advancement.
+            setTimeout(() => { isTransitioningRef.current = false; }, 0);
             setIsLoading(false);
             setError(null);
             setIsPlaying(true);
