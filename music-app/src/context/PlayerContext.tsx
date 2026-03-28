@@ -927,7 +927,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                     audio.load();
                     audio.currentTime = savedTime;
                     if (!wasPaused) {
-                        audio.play().catch(() => {});
+                        // Resume AudioContext before play — if the stall occurred
+                        // while the page was hidden (iOS backgrounded), the context
+                        // will be suspended. Playing into a suspended context produces
+                        // silence and fires handlePlaying (which clears
+                        // wasPlayingBeforeHiddenRef), leaving unlock with no resume intent.
+                        const stallCtxResume = audioCtxRef.current?.state === "suspended"
+                            ? audioCtxRef.current.resume()
+                            : Promise.resolve();
+                        stallCtxResume.then(() => audio.play()).catch(() => {});
                     }
                     // isTransitioningRef cleared by handlePlaying's setTimeout(300)
                 } catch {
@@ -996,9 +1004,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                         });
                 } else {
                     // Audio element is already playing (resumed by the OS itself on
-                    // some iOS versions). Just sync React state and clear the flag.
-                    wasPlayingBeforeHiddenRef.current = false;
-                    setIsPlaying(true);
+                    // some iOS versions). The HTMLAudioElement may have resumed but
+                    // the AudioContext is still suspended — iOS does not automatically
+                    // resume the AudioContext when it resumes the element. Without
+                    // resuming the context first, audio routes into a suspended graph
+                    // and produces silence even though the element reports playing.
+                    ctxResumePromise
+                        .then(() => {
+                            wasPlayingBeforeHiddenRef.current = false;
+                            setIsPlaying(true);
+                        })
+                        .catch(() => {
+                            // AudioContext resume blocked — keep flag for next cycle
+                        });
                 }
             }
         };
