@@ -193,6 +193,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // iOS PWA: iOS pauses the audio element when the app is backgrounded or the
     // screen locks. We remember whether we were playing so we can auto-resume.
     const wasPlayingBeforeHiddenRef = useRef(false);
+    // Set to true immediately before calling audio.pause() from a deliberate
+    // user action (togglePlay, mediaSession pause, sleep timer). Lets handlePause
+    // distinguish system-initiated pauses (where it must set wasPlayingBeforeHiddenRef)
+    // from user-initiated pauses (where it must not, so we don't auto-resume).
+    const isUserPauseRef = useRef(false);
     // Volume ref (always tracks latest user volume, avoids stale closures)
     const fadeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const volumeRef = useRef(volume);
@@ -657,10 +662,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (!("mediaSession" in navigator)) return;
 
         navigator.mediaSession.setActionHandler("play", () => {
-            audioRef.current?.play().catch(() => {});
-            setIsPlaying(true);
+            // iOS lock-screen play button fires this handler. The AudioContext
+            // will be suspended at this point — resume it before play() so
+            // audio actually routes through the gain/EQ graph instead of silence.
+            const ctxResumePromise = audioCtxRef.current?.state === "suspended"
+                ? audioCtxRef.current.resume()
+                : Promise.resolve();
+            ctxResumePromise
+                .then(() => audioRef.current?.play())
+                .then(() => {
+                    wasPlayingBeforeHiddenRef.current = false;
+                    setIsPlaying(true);
+                })
+                .catch(() => {});
         });
         navigator.mediaSession.setActionHandler("pause", () => {
+            // Explicit user action from the lock screen — flag it so handlePause
+            // does not set the iOS auto-resume intent.
+            isUserPauseRef.current = true;
+            wasPlayingBeforeHiddenRef.current = false;
             audioRef.current?.pause();
             setIsPlaying(false);
         });
@@ -835,6 +855,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             setError(null);
             setIsPlaying(true);
 
+            // If audio recovers from a system pause without us doing anything
+            // (e.g. Chromium pipeline stall that resolved itself, or iOS resuming
+            // audio without a visibilitychange cycle), clear the resume intent so
+            // we don't double-resume on the next unlock.
+            wasPlayingBeforeHiddenRef.current = false;
+
             // Connect to audio graph if we missed canplay (e.g. src set before
             // AudioContext was initialised and canplay already fired).
             if (audioCtxStartedRef.current) {
@@ -844,12 +870,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const handlePause = () => {
             if (isTransitioningRef.current) return;
-            // iOS PWA pauses the audio element before visibilitychange fires.
-            // If the document is already hidden this is a system-initiated pause
-            // (screen lock / app switch), not a user tap — remember intent.
-            if (document.visibilityState === "hidden") {
-                wasPlayingBeforeHiddenRef.current = true;
+
+            // isUserPauseRef is set by togglePlay / mediaSession pause / sleep timer
+            // immediately before calling audio.pause(). If it's set, this is a
+            // deliberate user pause — do NOT flag intent to resume.
+            if (isUserPauseRef.current) {
+                isUserPauseRef.current = false;
+                setIsPlaying(false);
+                return;
             }
+
+            // System-initiated pause (iOS screen lock, Android backgrounding, or
+            // Chromium pipeline stall). iOS timing: the "pause" event fires while
+            // document.visibilityState is still "visible" — BEFORE "visibilitychange"
+            // fires. We cannot rely on checking visibilityState here.
+            // Set the flag so handleVisibilityChange knows to auto-resume on unlock.
+            wasPlayingBeforeHiddenRef.current = true;
             setIsPlaying(false);
         };
 
@@ -906,37 +942,63 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             setIsPlaying(false);
         };
 
-        // iOS PWA / Electron: save playing intent when hidden, restore on visible.
-        // iOS pauses the HTMLAudioElement when the screen locks or the app is
-        // backgrounded — handlePause fires and sets isPlaying(false), but the user
-        // never tapped pause. On returning we must resume if they were playing.
+        // iOS PWA / Android Chrome / Electron: save playing intent when hidden,
+        // restore on visible.
+        //
+        // iOS timing (documented): screen lock → pause event (visibilityState
+        // still "visible") → visibilitychange (state → "hidden"). So handlePause
+        // above sets wasPlayingBeforeHiddenRef unconditionally on any non-
+        // transitioning pause. Here we handle two edge cases:
+        //   1. The page goes hidden while audio is still playing (handlePause
+        //      hasn't fired yet) — snap the flag here too.
+        //   2. The pause was a genuine user pause (phone stayed visible) — clear
+        //      the flag when the page becomes visible and audio is still paused,
+        //      meaning the user actually meant to pause.
         const handleVisibilityChange = () => {
             if (document.visibilityState === "hidden") {
-                // Snapshot intent if iOS hasn't paused the element yet.
-                // If it already paused (handlePause ran first), the ref is
-                // already set — don't overwrite it with false.
+                // Snapshot intent if handlePause hasn't already done so
+                // (race where visibilitychange fires before pause on some browsers).
                 if (audioRef.current != null && !audioRef.current.paused) {
                     wasPlayingBeforeHiddenRef.current = true;
                 }
                 return;
             }
+
             if (document.visibilityState === "visible" && audioRef.current) {
-                // Resume AudioContext first — iOS suspends it in the background.
-                const resume = audioCtxRef.current?.state === "suspended"
+                if (!wasPlayingBeforeHiddenRef.current) return;
+
+                // Do not clear the flag until play() actually succeeds —
+                // if play() is rejected we want to retry on the next
+                // visibility cycle rather than getting permanently stuck.
+                const audioEl = audioRef.current;
+
+                // Resume AudioContext first — iOS always suspends it when
+                // the page is backgrounded. play() into a suspended context
+                // produces silence even if the element is technically playing.
+                const ctxResumePromise = audioCtxRef.current?.state === "suspended"
                     ? audioCtxRef.current.resume()
                     : Promise.resolve();
 
-                if (wasPlayingBeforeHiddenRef.current) {
+                if (audioEl.paused) {
+                    ctxResumePromise
+                        .then(() => audioEl.play())
+                        .then(() => {
+                            // play() resolved — audio is running, clear intent flag
+                            wasPlayingBeforeHiddenRef.current = false;
+                            setIsPlaying(true);
+                        })
+                        .catch((err) => {
+                            // NotAllowedError: browser blocked autoplay after unlock.
+                            // Keep wasPlayingBeforeHiddenRef = true so we retry on
+                            // the next user interaction via togglePlay, or on the
+                            // next visibility cycle.
+                            console.warn("[Player] iOS resume play() blocked:", err?.name ?? err);
+                        });
+                } else {
+                    // Audio element is already playing (resumed by the OS itself on
+                    // some iOS versions). Just sync React state and clear the flag.
                     wasPlayingBeforeHiddenRef.current = false;
-                    // If iOS paused the element for us, restart it after the
-                    // AudioContext is live again.
-                    if (audioRef.current.paused) {
-                        resume.then(() => {
-                            audioRef.current?.play().catch(() => {});
-                        }).catch(() => {});
-                    } else {
-                        setIsPlaying(true);
-                    }
+                    setIsPlaying(true);
                 }
             }
         };
@@ -1087,14 +1149,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (!audio) return;
 
         if (isPlaying) {
+            // Explicit user pause — flag it so handlePause does not set the
+            // iOS auto-resume intent (wasPlayingBeforeHiddenRef).
+            isUserPauseRef.current = true;
             audio.pause();
             // handlePause listener will set isPlaying(false)
         } else {
-            // Resume AudioContext before playing (handles autoplay policy re-suspensions)
-            if (audioCtxRef.current?.state === "suspended") {
-                audioCtxRef.current.resume().catch(() => {});
-            }
-            audio.play().catch(e => console.error("Playback failed:", e));
+            // Resume AudioContext before playing (handles autoplay policy re-suspensions
+            // and iOS post-lock AudioContext suspension).
+            const ctxResumePromise = audioCtxRef.current?.state === "suspended"
+                ? audioCtxRef.current.resume()
+                : Promise.resolve();
+            ctxResumePromise
+                .then(() => audio.play())
+                .catch(e => console.error("Playback failed:", e));
             // handlePlaying listener will set isPlaying(true)
         }
     };
@@ -1213,6 +1281,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (minutes !== null && minutes > 0) {
             sleepTimeoutRef.current = setTimeout(() => {
                 if (audioRef.current) {
+                    // Flag as a deliberate (timer-initiated) pause so handlePause
+                    // does not set the iOS auto-resume intent.
+                    isUserPauseRef.current = true;
                     audioRef.current.pause();
                 }
                 setIsPlaying(false);
