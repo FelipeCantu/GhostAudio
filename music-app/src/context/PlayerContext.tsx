@@ -519,27 +519,40 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         isTransitioningRef.current = true;
 
-        // Apply a very short fade-out on the GainNode to avoid a click at the
-        // cut point (80 ms). This is inaudible as a gap but eliminates the hard
-        // click caused by an abrupt waveform discontinuity when src changes.
+        // Silence the gain node immediately before src reassignment so that the
+        // new track's first decoded frames cannot bleed through at non-zero gain.
+        // A ramp-to-zero was used here previously, but because audio.src is set
+        // AFTER the ramp is scheduled (not after it completes), the new track
+        // starts producing audio while the gain is still mid-ramp — causing an
+        // audible snippet of the new track to leak through before canplay fires
+        // the proper fade-in. Hard-cutting to 0 here closes that window entirely.
+        // The fade-in is handled in handleCanPlay via exponentialRampToValueAtTime.
         if (gainNodeRef.current && ctx.state === "running") {
             const now = ctx.currentTime;
             gainNodeRef.current.gain.cancelScheduledValues(now);
-            gainNodeRef.current.gain.setValueAtTime(gainNodeRef.current.gain.value, now);
-            gainNodeRef.current.gain.linearRampToValueAtTime(0, now + CROSSFADE_DURATION);
+            gainNodeRef.current.gain.setValueAtTime(0, now); // hard-cut: no bleed before canplay
         }
+
+        // Mark fade-in as pending BEFORE setting src. On cached/buffered tracks
+        // the browser fires canplay synchronously during src assignment, so the
+        // flag must be set first — otherwise handleCanPlay sees it as false and
+        // skips the gain ramp, leaving audio silent at gain=0 permanently.
+        (audio as unknown as Record<string, unknown>).__pendingFadeIn = true;
 
         // Set the new source. The browser will load from cache if the preload
         // element already fetched this URL (same-origin or CORS-cached).
         audio.src = src;
 
-        // Fade the gain back in once canplay fires (handled in handleCanPlay).
-        // We set a flag so canplay knows to ramp up.
-        (audio as unknown as Record<string, unknown>).__pendingFadeIn = true;
-
         audio.play().catch(e => {
+            // AbortError means a *prior* play() was interrupted by the src change —
+            // not a failure of this play call. Clearing the transition guard here
+            // would let the spurious pause event from the abort reach handlePause
+            // and set isPlaying(false) before handlePlaying fires. Guard is cleared
+            // by handlePlaying's setTimeout(0) in the normal path, or left for the
+            // error branch below.
+            if (e.name === "AbortError") return;
             isTransitioningRef.current = false;
-            if (e.name !== "AbortError") console.error("[Player] Playback failed:", e);
+            console.error("[Player] Playback failed:", e);
         });
     }, [addToRecentlyPlayed]);
 
@@ -703,7 +716,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const preload = new Audio();
         preload.preload = "auto";
         preload.crossOrigin = "anonymous";
-        preload.volume = 0; // Never actually played — only used for prefetching
+        preload.volume = 0;   // Never actually played — only used for prefetching
+        preload.muted = true; // Hard mute: volume=0 alone is not guaranteed across all
+                              // Chromium/Electron audio routing paths for custom protocols
         preloadRef.current = preload;
 
         const handleTimeUpdate = () => {
@@ -724,6 +739,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                         preloadedSrcRef.current = nextSrc;
                         preloadRef.current.src = nextSrc;
                         preloadRef.current.load();
+                        // Electron/Chromium: preload="auto" on a localfile:// element
+                        // can trigger implicit playback via the OS audio session even
+                        // when muted=true and volume=0 are set. Explicitly pause after
+                        // load() to ensure the preload element never produces audio.
+                        preloadRef.current.pause();
                         console.log("[Player] Preloading next track:", nextSrc);
                     }
                 }
@@ -797,13 +817,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const handleWaiting = () => setIsLoading(true);
 
         const handlePlaying = () => {
-            // Defer clearing the transition guard by one macrotask. Chromium fires
-            // a spurious "pause" event in the same microtask flush as "playing"
-            // during src-change transitions (buffer pipeline briefly stalls before
-            // the first decoded frame). Clearing the flag synchronously here would
-            // let that spurious pause reach handlePause and set isPlaying(false),
-            // producing the play-stop-play stutter on automatic track advancement.
-            setTimeout(() => { isTransitioningRef.current = false; }, 0);
+            // Defer clearing the transition guard. Chromium fires spurious "pause"
+            // events both in the same microtask flush as "playing" AND a few
+            // milliseconds later during decode-pipeline warmup (the audio thread
+            // briefly stalls before the first decoded frame is queued). A setTimeout(0)
+            // only guards the same-task case; the post-playing pipeline pause fires
+            // after the macrotask boundary and still reaches handlePause unguarded.
+            // 300 ms covers the full Chromium pipeline init window without being
+            // long enough to cause a perceptible delay on genuine user pauses
+            // (a user pause within 300 ms of a track starting is indistinguishable
+            // from an immediate pause for practical purposes).
+            setTimeout(() => { isTransitioningRef.current = false; }, 300);
             setIsLoading(false);
             setError(null);
             setIsPlaying(true);
@@ -850,13 +874,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                     // audio.load() fires an "abort" event synchronously; guard with
                     // isTransitioningRef so handleAbort does not set isPlaying(false)
                     // and kill playback while we are intentionally reloading.
+                    // Do NOT clear isTransitioningRef synchronously here — audio.play()
+                    // is async and the browser fires another pause during decode-pipeline
+                    // re-init after the reload. handlePlaying's setTimeout(300) will
+                    // clear the flag once the pipeline has stabilised.
                     isTransitioningRef.current = true;
                     audio.load();
                     audio.currentTime = savedTime;
                     if (!wasPaused) {
                         audio.play().catch(() => {});
                     }
-                    isTransitioningRef.current = false;
+                    // isTransitioningRef cleared by handlePlaying's setTimeout(300)
                 } catch {
                     isTransitioningRef.current = false;
                 }
