@@ -181,6 +181,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const shuffleModeRef = useRef(false);
     const repeatModeRef = useRef<RepeatMode>("off");
     const sleepTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Tracks the pending stall-recovery setTimeout so it can be cancelled on
+    // unmount or track change, preventing a fire into a dead closure.
+    const stallRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // Stable ref to nextTrackFromRefs so the audio `ended` handler (registered
     // once at mount) always calls the latest version without being stale.
     const nextTrackFromRefsRef = useRef<() => void>(() => {});
@@ -279,10 +282,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
 
         const ctx = new AudioContext({
-            // Request a low-latency profile. On most desktop hardware this gives
-            // 128–512 sample buffers (~3–12 ms). The browser may ignore this
-            // hint on low-power devices.
-            latencyHint: "playback",
+            // "interactive" requests the smallest OS buffer the hardware allows
+            // (~128–512 samples / 3–12 ms). "playback" requests the *largest*
+            // buffer (optimised for battery, not responsiveness), which causes
+            // audible lag on seeks and coarser crossfade transitions.
+            latencyHint: "interactive",
             // Do not hardcode a sample rate — let the browser match the hardware.
             // Forcing 44100 on a 48000 Hz output device causes the OS to add a
             // software resampler, which degrades quality unnecessarily.
@@ -334,10 +338,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         eqHigh.gain.value = 1.5;
 
         // AnalyserNode — sits after EQ so the visualiser reflects EQ'd audio.
-        // fftSize 2048 gives 1024 frequency bins; smoothing 0.8 makes bars fluid.
+        // fftSize 2048 gives 1024 frequency bins; smoothing 0.75 is the standard
+        // sweet spot — 0.8 made bass bins unresponsive to transients.
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 2048;
-        analyser.smoothingTimeConstant = 0.8;
+        analyser.smoothingTimeConstant = 0.75; // was 0.8: too sluggish on bass bins
 
         // Wire: GainNode → EQ Low → EQ Mid → EQ High → Analyser → Limiter → Speakers
         gainNode.connect(eqLow);
@@ -742,9 +747,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 setDuration(audio.duration);
             }
 
+            // Connect the audio element to the AudioContext graph first so that
+            // the gain ramp below is applied to an already-live source node.
+            // (createMediaElementSource throws before the context is initialised,
+            // so we guard with audioCtxStartedRef.)
+            if (audioCtxStartedRef.current) {
+                connectElementToGraph(audio);
+            }
+
             // If we scheduled a fade-in for this element (set by playTrackInternal),
             // ramp the gain back up to the user's volume level now that audio data
-            // is ready. This completes the click-prevention crossfade.
+            // is ready and the source node is connected. This completes the
+            // click-prevention crossfade.
             const pendingFadeIn = (audio as unknown as Record<string, unknown>).__pendingFadeIn;
             if (pendingFadeIn && gainNodeRef.current && audioCtxRef.current) {
                 const ctx = audioCtxRef.current;
@@ -757,14 +771,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                     Math.max(targetGain, 0.0001), now + CROSSFADE_DURATION
                 );
                 (audio as unknown as Record<string, unknown>).__pendingFadeIn = false;
-            }
-
-            // Connect the audio element to the AudioContext graph if not already done.
-            // We do this here (not at element creation) because createMediaElementSource
-            // will throw if called before the AudioContext is initialised, and the
-            // context is only created on the first play() call.
-            if (audioCtxStartedRef.current) {
-                connectElementToGraph(audio);
             }
         };
 
@@ -820,8 +826,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             const savedTime = audio.currentTime;
             const wasPaused = audio.paused;
 
+            // Cancel any prior pending recovery before scheduling a new one.
+            if (stallRecoveryTimerRef.current !== null) {
+                clearTimeout(stallRecoveryTimerRef.current);
+            }
+
             // Wait 3 s before intervening — transient stalls recover on their own.
-            setTimeout(() => {
+            // Stored in stallRecoveryTimerRef so unmount/track-change can cancel it.
+            stallRecoveryTimerRef.current = setTimeout(() => {
+                stallRecoveryTimerRef.current = null;
                 if (audioRef.current !== audio || audio.src !== savedSrc) return;
                 // Only intervene if still stalled (readyState < HAVE_FUTURE_DATA)
                 if (audio.readyState >= 3) return;
@@ -876,6 +889,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             if (preloadRef.current) {
                 preloadRef.current.src = "";
                 preloadRef.current = null;
+            }
+            // Cancel any pending stall-recovery timeout so it doesn't fire into
+            // a destroyed element after unmount.
+            if (stallRecoveryTimerRef.current !== null) {
+                clearTimeout(stallRecoveryTimerRef.current);
+                stallRecoveryTimerRef.current = null;
             }
             // Tear down the AudioContext graph
             if (sourceNodeRef.current) {
@@ -936,8 +955,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         // Apply volume through the AudioContext GainNode using a logarithmic curve.
         // gain = v^2 maps the linear slider value to a perceptually even loudness
         // progression (each 10% slider step sounds like the same perceptual jump).
+        // If normalise is active, preserve the -3 dB (×0.708) ceiling here so
+        // the offset isn't silently dropped when the user adjusts the slider.
         if (gainNodeRef.current && audioCtxRef.current) {
-            const targetGain = linearToGain(clamped);
+            const baseGain = linearToGain(clamped);
+            const targetGain = normaliseRef.current ? baseGain * 0.708 : baseGain; // 0.708 ≈ -3 dB
             const now = audioCtxRef.current.currentTime;
             // 20 ms exponential ramp: exponential sounds natural on a log-scale
             // parameter (gain already represents dB) and prevents zipper noise.

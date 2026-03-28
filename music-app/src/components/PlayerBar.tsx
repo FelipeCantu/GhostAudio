@@ -595,7 +595,9 @@ export default function PlayerBar() {
                       className="appearance-none cursor-pointer accent-[#f4d35e]"
                       style={{
                         writingMode: "vertical-lr",
-                        direction: "rtl",
+                        // direction:rtl inverts min/max on Firefox — rotate instead,
+                        // which is the correct cross-browser way to make "up = louder".
+                        transform: "rotate(180deg)",
                         width: "20px",
                         height: "100px",
                       }}

@@ -59,3 +59,6 @@ music-app/music_library/
 # ---- Temp / misc ----
 temp_icons/
 builder_log.txt
+
+# ---- Claude agents ----
+audio_agent.py
