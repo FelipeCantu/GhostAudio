@@ -146,7 +146,7 @@ export default function AlbumDetailView({ album, onBack, onAlbumUpdated }: Album
             }
 
             const coverUrl = `https://coverartarchive.org/release/${release.id}/front`;
-            const imgCheck = await fetch(coverUrl, { method: 'HEAD' });
+            const imgCheck = await fetch(`/api/coverart/${release.id}`);
             if (!imgCheck.ok) {
                 setCoverFetchMessage('No cover art found');
                 setTimeout(() => setCoverFetchMessage(null), 2500);

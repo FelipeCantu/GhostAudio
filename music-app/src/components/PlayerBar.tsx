@@ -18,6 +18,8 @@ import {
   ListMusic,
   Moon,
   X,
+  SlidersHorizontal,
+  Gauge,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -56,12 +58,20 @@ export default function PlayerBar() {
     cycleRepeat,
     sleepMinutes,
     setSleepTimer,
+    eqGains,
+    setEqGain,
+    getAnalyser,
+    normalise,
+    toggleNormalise,
   } = usePlayer();
 
   const [isMuted, setIsMuted] = useState(false);
   const [prevVolume, setPrevVolume] = useState(1);
   const [isExpanded, setIsExpanded] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
+  const [showEQ, setShowEQ] = useState(false);
+  const visualizerRef = useRef<HTMLCanvasElement | null>(null);
+  const animFrameRef  = useRef<number | null>(null);
   const [discImgError, setDiscImgError] = useState(false);
   const [cdArtUrl, setCdArtUrl] = useState<string | null>(null);
   const [scrubbing, setScrubbing] = useState(false);
@@ -90,6 +100,55 @@ export default function PlayerBar() {
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [showQueue]);
 
+  // ── Frequency visualizer ──────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = visualizerRef.current;
+    if (!canvas) return;
+
+    if (!isPlaying) {
+      // Fade bars to zero when paused
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      const ctx2d = canvas.getContext("2d");
+      if (ctx2d) ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    const analyser = getAnalyser();
+    if (!analyser) return;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    const ctx2d = canvas.getContext("2d");
+    if (!ctx2d) return;
+
+    const draw = () => {
+      animFrameRef.current = requestAnimationFrame(draw);
+      analyser.getByteFrequencyData(dataArray);
+
+      const { width, height } = canvas;
+      ctx2d.clearRect(0, 0, width, height);
+
+      // Show ~60% of bins (upper bins are mostly silence for music)
+      const usableBins = Math.floor(bufferLength * 0.6);
+      const barW = width / usableBins;
+
+      for (let i = 0; i < usableBins; i++) {
+        const v = dataArray[i] / 255;
+        const barH = v * height;
+        // Gold-to-orange gradient matching the app accent colours
+        const hue = 45 - v * 15;
+        const lightness = 55 + v * 15;
+        ctx2d.fillStyle = `hsla(${hue}, 90%, ${lightness}%, ${0.5 + v * 0.5})`;
+        ctx2d.fillRect(i * barW, height - barH, barW - 1, barH);
+      }
+    };
+
+    draw();
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    };
+  }, [isPlaying, getAnalyser]);
+
   // Fetch the "Medium" CD image from Cover Art Archive when track changes.
   // If the cover art URL is from CoverArtArchive, extract the MBID directly.
   // Otherwise, fall back to a MusicBrainz search by artist + album title.
@@ -104,7 +163,7 @@ export default function PlayerBar() {
     const fetchMediumArt = async (mbid: string) => {
       const cached = cdArtCache.current.get(mbid);
       if (cached !== undefined) { setCdArtUrl(cached); return; }
-      const r = await fetch(`https://coverartarchive.org/release/${mbid}`, { signal: controller.signal });
+      const r = await fetch(`/api/coverart/${mbid}`, { signal: controller.signal });
       const data = await r.json();
       const medium = (data.images as Array<{ types: string[]; image: string }> | undefined)
         ?.find((img) => Array.isArray(img.types) && img.types.includes("Medium"));
@@ -493,6 +552,77 @@ export default function PlayerBar() {
         )}
       </AnimatePresence>
 
+      {/* ── EQ panel ─────────────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showEQ && (
+          <motion.div
+            key="eq-panel"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.18 }}
+            className="hidden md:block fixed right-4 z-[55] bg-[#0d1a26]/97 backdrop-blur-2xl border border-white/10 rounded-2xl p-5 shadow-2xl"
+            style={{ bottom: "calc(var(--player-height, 80px) + 8px)" }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Equaliser</span>
+              <button
+                onClick={() => setShowEQ(false)}
+                className="text-zinc-500 hover:text-white transition-colors"
+                aria-label="Close EQ"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* 3 vertical sliders */}
+            <div className="flex gap-6 items-end">
+              {(["low", "mid", "high"] as const).map((band) => {
+                const labels = { low: "Bass", mid: "Mid", high: "Treble" };
+                const freqs  = { low: "80 Hz", mid: "3 kHz", high: "12 kHz" };
+                return (
+                  <div key={band} className="flex flex-col items-center gap-2">
+                    <span className="text-[10px] text-zinc-400 tabular-nums w-8 text-center">
+                      {eqGains[band] >= 0 ? "+" : ""}{eqGains[band].toFixed(1)} dB
+                    </span>
+                    <input
+                      type="range"
+                      min={-12}
+                      max={12}
+                      step={0.5}
+                      value={eqGains[band]}
+                      onChange={(e) => setEqGain(band, parseFloat(e.target.value))}
+                      className="appearance-none cursor-pointer accent-[#f4d35e]"
+                      style={{
+                        writingMode: "vertical-lr",
+                        direction: "rtl",
+                        width: "20px",
+                        height: "100px",
+                      }}
+                      aria-label={`${labels[band]} EQ`}
+                    />
+                    <span className="text-[10px] font-medium text-white">{labels[band]}</span>
+                    <span className="text-[9px] text-zinc-500">{freqs[band]}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Reset button */}
+            <button
+              onClick={() => {
+                setEqGain("low",  2);
+                setEqGain("mid",  1);
+                setEqGain("high", 1.5);
+              }}
+              className="mt-4 w-full text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              Reset to defaults
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ─────────────────────────────────────────────────────────────────────────
           Queue panel — Apple Music style
       ───────────────────────────────────────────────────────────────────────── */}
@@ -670,6 +800,15 @@ export default function PlayerBar() {
             "bottom-16 lg:bottom-0",
           ].join(" ")}
         >
+          {/* ── Frequency visualizer — desktop only, sits above progress bar ── */}
+          <canvas
+            ref={visualizerRef}
+            width={1200}
+            height={28}
+            className="hidden md:block w-full"
+            style={{ display: "block" }}
+          />
+
           {/* Desktop progress bar — native range input, click or drag to seek */}
           <div
             className="hidden md:block relative"
@@ -884,6 +1023,33 @@ export default function PlayerBar() {
                 className="w-20 h-1 accent-[#f4d35e] bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
                 aria-label="Volume"
               />
+
+              {/* Normalise toggle */}
+              <button
+                onClick={toggleNormalise}
+                className={`rounded-md transition-colors min-w-[32px] min-h-[32px] flex items-center justify-center ${
+                  normalise
+                    ? "text-[#f4d35e] bg-[#f4d35e]/10"
+                    : "text-zinc-500 hover:text-zinc-300 hover:bg-white/6"
+                }`}
+                aria-label={normalise ? "Normalisation on" : "Normalisation off"}
+                title="Volume normalisation (-3 dB)"
+              >
+                <Gauge size={16} />
+              </button>
+
+              {/* EQ toggle button */}
+              <button
+                onClick={() => setShowEQ((prev) => !prev)}
+                className={`rounded-md transition-colors min-w-[32px] min-h-[32px] flex items-center justify-center ${
+                  showEQ
+                    ? "text-[#f4d35e] bg-[#f4d35e]/10"
+                    : "text-zinc-500 hover:text-zinc-300 hover:bg-white/6"
+                }`}
+                aria-label={showEQ ? "Hide EQ" : "Show EQ"}
+              >
+                <SlidersHorizontal size={16} />
+              </button>
 
               {/* Queue toggle button */}
               <button

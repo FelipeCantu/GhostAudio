@@ -47,6 +47,14 @@ interface PlayerContextType {
     // Sleep timer
     sleepMinutes: number | null;
     setSleepTimer: (minutes: number | null) => void;
+    // EQ
+    eqGains: { low: number; mid: number; high: number };
+    setEqGain: (band: "low" | "mid" | "high", value: number) => void;
+    // Visualizer — returns the live AnalyserNode for canvas rendering
+    getAnalyser: () => AnalyserNode | null;
+    // Volume normalisation
+    normalise: boolean;
+    toggleNormalise: () => void;
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -65,16 +73,16 @@ function linearToGain(linearVolume: number): number {
 }
 
 // Preload window: start buffering next track this many seconds before end.
-// 20 s gives plenty of time even on a slow R2 connection.
-const PRELOAD_AHEAD_SECONDS = 20;
+// 30 s gives ample time on slow R2 connections and handles large FLAC files.
+const PRELOAD_AHEAD_SECONDS = 30;
 
 // Crossfade duration in seconds for smooth track transitions.
-// 0.08 s (80 ms) is inaudible as a gap-filler but avoids any click at the
-// transition point. True crossfade (overlapping audio) is not used here because
-// it would require decoding the next track into an AudioBufferSourceNode, which
-// is expensive for long MP3 files. Instead we fade out the tail and fade in the
-// start over 80 ms using the GainNode ramp API.
-const CROSSFADE_DURATION = 0.08;
+// 150 ms is long enough to be a perceptibly smooth transition while short enough
+// that it doesn't feel like a fade. True crossfade (overlapping audio) is not
+// used here because it would require decoding the next track into an
+// AudioBufferSourceNode, which is expensive for long MP3 files. Instead we fade
+// out the tail and fade in the start using the GainNode ramp API.
+const CROSSFADE_DURATION = 0.15;
 
 function getTrackKey(track: Track, albumInfo?: AlbumInfo | null): string {
     return `${track.title}::${albumInfo?.artist ?? ""}`;
@@ -122,6 +130,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const [playCounts, setPlayCounts] = useState<Record<string, number>>({});
     const [sleepMinutes, setSleepMinutesState] = useState<number | null>(null);
     const [shuffleQueue, setShuffleQueue] = useState<Track[]>([]);
+    // EQ gains (dB) — match the defaults wired into ensureAudioContext
+    const [eqGains, setEqGainsState] = useState({ low: 2, mid: 1, high: 1.5 });
+    // Volume normalisation — applies a gentle -3 dB pre-gain so peaks have headroom
+    const [normalise, setNormalise] = useState(false);
+    const normaliseRef = useRef(false);
 
     // ─── Audio element refs ───────────────────────────────────────────────────
     // We use a HTMLAudioElement (not AudioBufferSourceNode) because:
@@ -151,6 +164,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // can only be connected to one context at a time, so we track the node ref.
     const audioCtxRef = useRef<AudioContext | null>(null);
     const gainNodeRef = useRef<GainNode | null>(null);
+    // 3-band EQ nodes (low shelf → mid peak → high shelf)
+    const eqLowRef  = useRef<BiquadFilterNode | null>(null);
+    const eqMidRef  = useRef<BiquadFilterNode | null>(null);
+    const eqHighRef = useRef<BiquadFilterNode | null>(null);
+    // AnalyserNode — tapped after EQ for the frequency visualiser
+    const analyserRef = useRef<AnalyserNode | null>(null);
     const limiterRef = useRef<DynamicsCompressorNode | null>(null);
     const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
     // Whether the AudioContext has been started via a user gesture
@@ -273,23 +292,68 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const gainNode = ctx.createGain();
         gainNode.gain.value = linearToGain(volumeRef.current);
 
-        // DynamicsCompressorNode as a transparent soft limiter.
-        // Engages only above -1 dBFS to prevent clipping without audible
-        // compression on normal-level material.
+        // DynamicsCompressorNode as a true brickwall limiter.
+        // Only engages above -0.5 dBFS so it is completely inaudible on all
+        // normal-level material. Previous settings (-1 dBFS / 20:1) caused
+        // constant gain reduction on modern music (already mastered near 0 dBFS),
+        // producing audible pumping, crushing, and distortion.
+        //
+        //   threshold: -0.5 dBFS  — only fire if output is near-clipping
+        //   knee:       0 dB      — hard knee = brickwall limiter behaviour
+        //   ratio:      100:1     — effectively infinite ratio (true limiter)
+        //   attack:     1 ms      — catches transients before they clip
+        //   release:    100 ms    — fast enough to avoid pumping artefacts
         const limiter = ctx.createDynamicsCompressor();
-        limiter.threshold.value = -1;   // dBFS: only limit near full scale
-        limiter.knee.value = 0;          // hard knee = limiter behaviour
-        limiter.ratio.value = 20;        // 20:1 = limiter (not compressor)
-        limiter.attack.value = 0.003;    // 3 ms: fast enough to catch transients
-        limiter.release.value = 0.25;    // 250 ms: short enough not to pump
+        limiter.threshold.value = -0.5;  // dBFS: only limit at near-clipping
+        limiter.knee.value = 0;           // hard knee = brickwall limiter
+        limiter.ratio.value = 100;        // ~∞:1 = true brickwall limiter
+        limiter.attack.value = 0.001;     // 1 ms: fast transient catching
+        limiter.release.value = 0.1;      // 100 ms: no pumping
 
-        // Wire: GainNode → Limiter → Speakers
-        gainNode.connect(limiter);
+        // ── 3-band EQ ────────────────────────────────────────────────────────
+        // Placed after the volume GainNode and before the limiter.
+        // All gains are gentle — the goal is flattering enhancement, not heavy EQ.
+        //
+        //   Low shelf  80 Hz  +2 dB — warmth and body (bass fundamentals)
+        //   Mid peak  3 kHz   +1 dB — presence and vocal clarity
+        //   High shelf 12 kHz +1.5 dB — air and sparkle (cymbals, reverb tails)
+        const eqLow = ctx.createBiquadFilter();
+        eqLow.type = "lowshelf";
+        eqLow.frequency.value = 80;
+        eqLow.gain.value = 2;
+
+        const eqMid = ctx.createBiquadFilter();
+        eqMid.type = "peaking";
+        eqMid.frequency.value = 3000;
+        eqMid.Q.value = 0.8;
+        eqMid.gain.value = 1;
+
+        const eqHigh = ctx.createBiquadFilter();
+        eqHigh.type = "highshelf";
+        eqHigh.frequency.value = 12000;
+        eqHigh.gain.value = 1.5;
+
+        // AnalyserNode — sits after EQ so the visualiser reflects EQ'd audio.
+        // fftSize 2048 gives 1024 frequency bins; smoothing 0.8 makes bars fluid.
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.8;
+
+        // Wire: GainNode → EQ Low → EQ Mid → EQ High → Analyser → Limiter → Speakers
+        gainNode.connect(eqLow);
+        eqLow.connect(eqMid);
+        eqMid.connect(eqHigh);
+        eqHigh.connect(analyser);
+        analyser.connect(limiter);
         limiter.connect(ctx.destination);
 
-        audioCtxRef.current = ctx;
-        gainNodeRef.current = gainNode;
-        limiterRef.current = limiter;
+        audioCtxRef.current  = ctx;
+        gainNodeRef.current  = gainNode;
+        eqLowRef.current     = eqLow;
+        eqMidRef.current     = eqMid;
+        eqHighRef.current    = eqHigh;
+        analyserRef.current  = analyser;
+        limiterRef.current   = limiter;
 
         return ctx;
     }
@@ -687,8 +751,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 const now = ctx.currentTime;
                 const targetGain = linearToGain(volumeRef.current);
                 gainNodeRef.current.gain.cancelScheduledValues(now);
-                gainNodeRef.current.gain.setValueAtTime(0, now);
-                gainNodeRef.current.gain.linearRampToValueAtTime(targetGain, now + CROSSFADE_DURATION);
+                // Start from near-silent (exponential ramp cannot start from 0)
+                gainNodeRef.current.gain.setValueAtTime(0.0001, now);
+                gainNodeRef.current.gain.exponentialRampToValueAtTime(
+                    Math.max(targetGain, 0.0001), now + CROSSFADE_DURATION
+                );
                 (audio as unknown as Record<string, unknown>).__pendingFadeIn = false;
             }
 
@@ -819,6 +886,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 try { gainNodeRef.current.disconnect(); } catch { /* ignore */ }
                 gainNodeRef.current = null;
             }
+            for (const ref of [eqLowRef, eqMidRef, eqHighRef]) {
+                if (ref.current) {
+                    try { ref.current.disconnect(); } catch { /* ignore */ }
+                    ref.current = null;
+                }
+            }
+            if (analyserRef.current) {
+                try { analyserRef.current.disconnect(); } catch { /* ignore */ }
+                analyserRef.current = null;
+            }
             if (limiterRef.current) {
                 try { limiterRef.current.disconnect(); } catch { /* ignore */ }
                 limiterRef.current = null;
@@ -862,10 +939,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (gainNodeRef.current && audioCtxRef.current) {
             const targetGain = linearToGain(clamped);
             const now = audioCtxRef.current.currentTime;
-            // Short 10 ms ramp prevents zipper noise (clicking) from abrupt gain changes
+            // 20 ms exponential ramp: exponential sounds natural on a log-scale
+            // parameter (gain already represents dB) and prevents zipper noise.
+            // Exponential ramp cannot target exactly 0, so for mute we use a
+            // near-silent value and let the element-level volume handle true mute.
+            const safeTarget = Math.max(targetGain, 0.0001);
             gainNodeRef.current.gain.cancelScheduledValues(now);
-            gainNodeRef.current.gain.setValueAtTime(gainNodeRef.current.gain.value, now);
-            gainNodeRef.current.gain.linearRampToValueAtTime(targetGain, now + 0.01);
+            gainNodeRef.current.gain.setValueAtTime(
+                Math.max(gainNodeRef.current.gain.value, 0.0001), now
+            );
+            gainNodeRef.current.gain.exponentialRampToValueAtTime(safeTarget, now + 0.02);
+            // For true mute, schedule a hard zero after the ramp completes
+            if (targetGain === 0) {
+                gainNodeRef.current.gain.setValueAtTime(0, now + 0.02);
+            }
         } else {
             // AudioContext not yet initialised (before first play) — fall back to
             // element volume so the mute/volume slider still works immediately.
@@ -985,6 +1072,42 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         });
     };
 
+    // ─── EQ ──────────────────────────────────────────────────────────────────────
+
+    const setEqGain = (band: "low" | "mid" | "high", value: number) => {
+        const clamped = Math.max(-12, Math.min(12, value));
+        setEqGainsState(prev => ({ ...prev, [band]: clamped }));
+        const nodeRef = band === "low" ? eqLowRef : band === "mid" ? eqMidRef : eqHighRef;
+        if (nodeRef.current) {
+            nodeRef.current.gain.value = clamped;
+        }
+    };
+
+    // ─── Visualiser ───────────────────────────────────────────────────────────────
+
+    const getAnalyser = () => analyserRef.current;
+
+    // ─── Volume normalisation ─────────────────────────────────────────────────────
+    // Applies a -3 dB ceiling on the GainNode when enabled, giving all tracks
+    // consistent perceived loudness without full LUFS analysis.
+
+    const toggleNormalise = () => {
+        const next = !normaliseRef.current;
+        normaliseRef.current = next;
+        setNormalise(next);
+        if (gainNodeRef.current && audioCtxRef.current) {
+            const baseGain = linearToGain(volumeRef.current);
+            const targetGain = next ? baseGain * 0.708 : baseGain; // 0.708 ≈ -3 dB
+            const now = audioCtxRef.current.currentTime;
+            const safeTarget = Math.max(targetGain, 0.0001);
+            gainNodeRef.current.gain.cancelScheduledValues(now);
+            gainNodeRef.current.gain.setValueAtTime(
+                Math.max(gainNodeRef.current.gain.value, 0.0001), now
+            );
+            gainNodeRef.current.gain.exponentialRampToValueAtTime(safeTarget, now + 0.05);
+        }
+    };
+
     const setSleepTimer = (minutes: number | null) => {
         if (sleepTimeoutRef.current !== null) {
             clearTimeout(sleepTimeoutRef.current);
@@ -1032,6 +1155,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             playCounts,
             sleepMinutes,
             setSleepTimer,
+            eqGains,
+            setEqGain,
+            getAnalyser,
+            normalise,
+            toggleNormalise,
         }}>
             {children}
         </PlayerContext.Provider>

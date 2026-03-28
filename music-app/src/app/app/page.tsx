@@ -362,7 +362,7 @@ export default function Home() {
               const cover = entry.albumInfo?.coverArt;
               return (
                 <motion.button
-                  key={`recent-${entry.track.id}-${entry.playedAt}`}
+                  key={`recent-${entry.track.title}-${entry.playedAt}`}
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: 0.28 + i * 0.05 }}
