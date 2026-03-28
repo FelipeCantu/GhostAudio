@@ -844,6 +844,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const handlePause = () => {
             if (isTransitioningRef.current) return;
+            // iOS PWA pauses the audio element before visibilitychange fires.
+            // If the document is already hidden this is a system-initiated pause
+            // (screen lock / app switch), not a user tap — remember intent.
+            if (document.visibilityState === "hidden") {
+                wasPlayingBeforeHiddenRef.current = true;
+            }
             setIsPlaying(false);
         };
 
@@ -906,8 +912,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         // never tapped pause. On returning we must resume if they were playing.
         const handleVisibilityChange = () => {
             if (document.visibilityState === "hidden") {
-                wasPlayingBeforeHiddenRef.current =
-                    audioRef.current != null && !audioRef.current.paused;
+                // Snapshot intent if iOS hasn't paused the element yet.
+                // If it already paused (handlePause ran first), the ref is
+                // already set — don't overwrite it with false.
+                if (audioRef.current != null && !audioRef.current.paused) {
+                    wasPlayingBeforeHiddenRef.current = true;
+                }
                 return;
             }
             if (document.visibilityState === "visible" && audioRef.current) {
