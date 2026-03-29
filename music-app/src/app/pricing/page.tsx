@@ -88,8 +88,7 @@ function PricingNav({ isAuthenticated }: { isAuthenticated: boolean }) {
       <div className="max-w-7xl mx-auto px-5 h-full flex items-center justify-between gap-4">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 group" aria-label="DiZC home">
-          <Disc className="text-[#f4d35e] w-7 h-7 animate-[spin_10s_linear_infinite]" />
-          <span className="text-xl font-bold tracking-tighter text-white">DiZC</span>
+          <img src="/dizclogo.png" alt="DiZC" className="h-8 w-auto" />
         </Link>
 
         {/* Desktop nav links */}
@@ -455,8 +454,7 @@ function SiteFooter() {
           {/* Brand */}
           <div className="md:col-span-1">
             <div className="flex items-center gap-2 mb-4">
-              <Disc className="text-[#f4d35e]" size={22} />
-              <span className="font-bold text-white text-lg">DiZC</span>
+              <img src="/dizclogo.png" alt="DiZC" className="h-7 w-auto" />
             </div>
             <p className="text-zinc-500 text-sm leading-relaxed">
               The Future of Local Audio. Built for audiophiles who demand control.

@@ -150,9 +150,8 @@ export default function LandingPage() {
       <nav className="fixed top-0 w-full z-50 bg-[#0d1b2a]/90 backdrop-blur-md border-b border-white/5">
         <div className="max-w-7xl mx-auto px-5 h-16 flex items-center justify-between">
           {/* Logo */}
-          <div className="flex items-center gap-2.5">
-            <Disc className="text-[#f4d35e] w-7 h-7 animate-[spin_10s_linear_infinite]" />
-            <span className="text-xl font-bold tracking-tighter text-white">DiZC</span>
+          <div className="flex items-center">
+            <img src="/dizclogo.png" alt="DiZC" className="h-8 w-auto" />
           </div>
 
           {/* Desktop Links */}
@@ -233,9 +232,8 @@ export default function LandingPage() {
 
             {/* Header row */}
             <div className="relative z-10 flex items-center justify-between px-5 h-16 border-b border-white/5 flex-shrink-0">
-              <div className="flex items-center gap-2.5">
-                <Disc className="text-[#f4d35e] w-7 h-7 animate-[spin_10s_linear_infinite]" />
-                <span className="text-xl font-bold tracking-tighter text-white">DiZC</span>
+              <div className="flex items-center">
+                <img src="/dizclogo.png" alt="DiZC" className="h-8 w-auto" />
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
@@ -580,9 +578,8 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-10 mb-10">
             {/* Brand */}
             <div className="md:col-span-1">
-              <div className="flex items-center gap-2 mb-4">
-                <Disc className="text-[#f4d35e]" size={22} />
-                <span className="font-bold text-white text-lg">DiZC</span>
+              <div className="flex items-center mb-4">
+                <img src="/dizclogo.png" alt="DiZC" className="h-7 w-auto" />
               </div>
               <p className="text-zinc-500 text-sm leading-relaxed">
                 The Future of Local Audio. Built for audiophiles who demand control.

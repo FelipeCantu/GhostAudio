@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Dark rounded square background -->
+  <rect width="100" height="100" rx="18" ry="18" fill="#1a1f35"/>
+
+  <!--
+    9 golden bars, vertically centered at y=50.
+    Heights increased — bars are longer now.
+    Bar width=5, gap=3, slot=8. Total=9*8-3=69. Start x=15.5
+  -->
+
+  <!-- Bar 1 (far left) h=24 -->
+  <rect x="15.5" y="38" width="5" height="24" rx="2.5" ry="2.5" fill="#C9A84C"/>
+  <!-- Bar 2 h=38 -->
+  <rect x="23.5" y="31" width="5" height="38" rx="2.5" ry="2.5" fill="#C9A84C"/>
+  <!-- Bar 3 h=54 -->
+  <rect x="31.5" y="23" width="5" height="54" rx="2.5" ry="2.5" fill="#C9A84C"/>
+  <!-- Bar 4 h=70 -->
+  <rect x="39.5" y="15" width="5" height="70" rx="2.5" ry="2.5" fill="#C9A84C"/>
+  <!-- Bar 5 (center) h=82 -->
+  <rect x="47.5" y="9" width="5" height="82" rx="2.5" ry="2.5" fill="#C9A84C"/>
+  <!-- Bar 6 h=70 -->
+  <rect x="55.5" y="15" width="5" height="70" rx="2.5" ry="2.5" fill="#C9A84C"/>
+  <!-- Bar 7 h=54 -->
+  <rect x="63.5" y="23" width="5" height="54" rx="2.5" ry="2.5" fill="#C9A84C"/>
+  <!-- Bar 8 h=38 -->
+  <rect x="71.5" y="31" width="5" height="38" rx="2.5" ry="2.5" fill="#C9A84C"/>
+  <!-- Bar 9 (far right) h=24 -->
+  <rect x="79.5" y="38" width="5" height="24" rx="2.5" ry="2.5" fill="#C9A84C"/>
+
+  <!-- Center circle matching background color -->
+  <circle cx="50" cy="50" r="10" fill="#1a1f35"/>
+</svg>

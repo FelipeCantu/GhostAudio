@@ -55,8 +55,7 @@ export default function LoginPage() {
           href="/"
           className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm"
         >
-          <Disc size={16} className="text-[#f4d35e]" />
-          <span className="font-bold text-white">DiZC</span>
+          <img src="/dizclogo.png" alt="DiZC" className="h-5 w-auto" />
         </Link>
       </div>
 
@@ -70,7 +69,7 @@ export default function LoginPage() {
         <div className="flex flex-col items-center mb-8">
           <div className="relative w-20 h-20 mb-5">
             <Image
-              src="/logo.png"
+              src="/logo.svg"
               alt="DiZC Logo"
               fill
               className="object-contain drop-shadow-[0_0_20px_rgba(244,211,94,0.25)]"
