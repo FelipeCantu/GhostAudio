@@ -1021,6 +1021,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             }
         };
 
+        // iOS PWA: audio.play() called from a visibilitychange handler or a
+        // Promise .then() is NOT a user gesture — Safari rejects it with
+        // NotAllowedError. The only reliable way to resume after screen lock is
+        // to call play() directly inside a touchstart handler, which iOS does
+        // count as a user gesture. This listener is a no-op unless the resume
+        // intent flag is set (i.e. iOS paused us during a lock/background).
+        const handleTouchResume = () => {
+            if (!wasPlayingBeforeHiddenRef.current) return;
+            const audioEl = audioRef.current;
+            if (!audioEl || !audioEl.paused) return;
+            const ctx = audioCtxRef.current;
+            const ctxResume = ctx?.state === "suspended"
+                ? ctx.resume()
+                : Promise.resolve();
+            ctxResume.then(() => audioEl.play()).catch(() => {});
+        };
+
         audio.addEventListener("timeupdate", handleTimeUpdate);
         audio.addEventListener("loadedmetadata", handleLoadedMetadata);
         audio.addEventListener("durationchange", handleDurationChange);
@@ -1034,6 +1051,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         audio.addEventListener("stalled", handleStalled);
         audio.addEventListener("abort", handleAbort);
         document.addEventListener("visibilitychange", handleVisibilityChange);
+        document.addEventListener("touchstart", handleTouchResume, { passive: true });
 
         return () => {
             audio.pause();
@@ -1090,6 +1108,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             audio.removeEventListener("stalled", handleStalled);
             audio.removeEventListener("abort", handleAbort);
             document.removeEventListener("visibilitychange", handleVisibilityChange);
+            document.removeEventListener("touchstart", handleTouchResume);
         };
         // Stable references — intentionally empty dependency array.
         // All mutable state is accessed via refs inside the handlers.
