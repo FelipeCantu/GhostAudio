@@ -394,6 +394,39 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         analyserRef.current  = analyser;
         limiterRef.current   = limiter;
 
+        // iOS fires statechange when the audio session is interrupted (screen
+        // lock, phone call, switching apps) and again when the interruption
+        // ends. This is more reliable than visibilitychange for resuming because:
+        //   1. It fires at the exact moment iOS is ready to resume audio.
+        //   2. Calling play() here is treated as an "interruption ended" resume
+        //      by iOS — not a fresh play — so gesture trust is preserved.
+        // When interrupted: try resume() immediately. On some iOS versions this
+        // prevents the full suspension and keeps background audio uninterrupted.
+        ctx.addEventListener('statechange', () => {
+            dbg(`ctx statechange → ${ctx.state}`);
+            if (ctx.state === 'interrupted') {
+                // Attempt immediate resume on interruption start.
+                // Succeeds on iOS 16+ in some scenarios (e.g. app switch without
+                // a phone call). Fails silently if iOS rejects it.
+                ctx.resume().catch(() => {});
+                return;
+            }
+            if (ctx.state === 'running' && wasPlayingBeforeHiddenRef.current) {
+                const audioEl = audioRef.current;
+                if (audioEl && audioEl.paused) {
+                    audioEl.play()
+                        .then(() => {
+                            dbg('statechange resume play() OK');
+                            wasPlayingBeforeHiddenRef.current = false;
+                        })
+                        .catch(e => dbg(`statechange resume play() FAILED: ${e?.name}`));
+                } else {
+                    // Element still playing (audio uninterrupted on some devices)
+                    wasPlayingBeforeHiddenRef.current = false;
+                }
+            }
+        });
+
         return ctx;
     }
 
@@ -702,14 +735,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (!("mediaSession" in navigator)) return;
 
         navigator.mediaSession.setActionHandler("play", () => {
-            // iOS lock-screen play button fires this handler. The AudioContext
-            // will be suspended at this point — resume it before play() so
-            // audio actually routes through the gain/EQ graph instead of silence.
-            const ctxResumePromise = audioCtxRef.current && audioCtxRef.current.state !== "running" && audioCtxRef.current.state !== "closed"
-                ? audioCtxRef.current.resume()
-                : Promise.resolve();
-            ctxResumePromise
-                .then(() => audioRef.current?.play())
+            // iOS lock-screen play button fires this handler as a user gesture.
+            // Call ctx.resume() and audio.play() synchronously — chaining play()
+            // inside .then() loses iOS gesture trust and produces NotAllowedError.
+            const ctx = audioCtxRef.current;
+            if (ctx && ctx.state !== "running" && ctx.state !== "closed") {
+                ctx.resume().catch(() => {});
+            }
+            audioRef.current?.play()
                 .then(() => {
                     wasPlayingBeforeHiddenRef.current = false;
                     setIsPlaying(true);
@@ -959,10 +992,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                         // will be suspended. Playing into a suspended context produces
                         // silence and fires handlePlaying (which clears
                         // wasPlayingBeforeHiddenRef), leaving unlock with no resume intent.
-                        const stallCtxResume = audioCtxRef.current && audioCtxRef.current.state !== "running" && audioCtxRef.current.state !== "closed"
-                            ? audioCtxRef.current.resume()
-                            : Promise.resolve();
-                        stallCtxResume.then(() => audio.play()).catch(() => {});
+                        if (audioCtxRef.current && audioCtxRef.current.state !== "running" && audioCtxRef.current.state !== "closed") {
+                            audioCtxRef.current.resume().catch(() => {});
+                        }
+                        audio.play().catch(() => {});
                     }
                     // isTransitioningRef cleared by handlePlaying's setTimeout(300)
                 } catch {
@@ -1021,9 +1054,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                             wasPlayingBeforeHiddenRef.current = false;
                         })
                         .catch(e => dbg(`play() after unlock FAILED: ${e?.name} → touchstart will retry`));
-                } else {
+                } else if (audioCtxRef.current?.state === "running") {
+                    // Element is already playing AND context is running — truly fine.
+                    // Only clear the flag here: if the context is still interrupted,
+                    // the statechange → running handler must keep the flag to resume.
                     wasPlayingBeforeHiddenRef.current = false;
                 }
+                // else: context still interrupted with element playing — leave flag set
+                // so statechange → running can call audio.play() once ctx recovers.
             }
         };
 
@@ -1197,14 +1235,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             audio.pause();
             // handlePause listener will set isPlaying(false)
         } else {
-            // Resume AudioContext before playing (handles autoplay policy re-suspensions
-            // and iOS post-lock AudioContext suspension).
-            const ctxResumePromise = audioCtxRef.current && audioCtxRef.current.state !== "running" && audioCtxRef.current.state !== "closed"
-                ? audioCtxRef.current.resume()
-                : Promise.resolve();
-            ctxResumePromise
-                .then(() => audio.play())
-                .catch(e => console.error("Playback failed:", e));
+            // Resume AudioContext synchronously — calling play() inside .then()
+            // loses iOS gesture trust and produces NotAllowedError.
+            if (audioCtxRef.current && audioCtxRef.current.state !== "running" && audioCtxRef.current.state !== "closed") {
+                audioCtxRef.current.resume().catch(() => {});
+            }
+            audio.play().catch(e => console.error("Playback failed:", e));
             // handlePlaying listener will set isPlaying(true)
         }
     };
