@@ -908,6 +908,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 dbg(`pause IGNORED (transitioning)`);
                 return;
             }
+            // Browser fires pause then ended when a track finishes naturally.
+            // At this point audio.ended is true — ignore it, handleEnded takes over.
+            if (audio.ended || (audio.duration > 0 && audio.currentTime >= audio.duration - 0.1)) {
+                dbg(`pause at track end — ignored`);
+                return;
+            }
             if (isUserPauseRef.current) {
                 dbg(`pause user-initiated`);
                 isUserPauseRef.current = false;
