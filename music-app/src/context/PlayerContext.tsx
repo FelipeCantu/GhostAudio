@@ -86,8 +86,17 @@ function linearToGain(linearVolume: number): number {
 }
 
 // Preload window: start buffering next track this many seconds before end.
-// Reduced from 30 to 5 seconds to prevent premature loading and hiccups
-const PRELOAD_AHEAD_SECONDS = 5;
+// Raised from 5 → 10 seconds specifically for large uncompressed files (WAV,
+// AIFF). A 44.1 kHz / 16-bit stereo WAV runs at ~10 MB/min (~167 KB/s).
+// 5 s ≈ 830 KB — on a congested mobile connection (4G with ~1–2 Mbps
+// effective throughput) the preload element may not reach HAVE_FUTURE_DATA (3)
+// before the primary element fires `ended`, causing the gapless bridge to fall
+// back to a fresh network load and introducing a short audible gap.
+// 10 s ≈ 1.6 MB — enough for the range request to complete before the bridge
+// activates on most mobile connections while still being far enough from the
+// start of the track that it won't trigger on very short tracks or
+// trigger double-downloads when the user skips tracks quickly.
+const PRELOAD_AHEAD_SECONDS = 10;
 
 
 function getTrackKey(track: Track, albumInfo?: AlbumInfo | null): string {
