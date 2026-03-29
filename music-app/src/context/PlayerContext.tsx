@@ -536,7 +536,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         // Resume if the context was suspended by the browser's autoplay policy.
         // This is a no-op if it's already running.
-        if (ctx.state === "suspended") {
+        if (ctx.state !== "running" && ctx.state !== "closed") {
             ctx.resume().catch(e => console.warn("[Player] AudioContext resume failed:", e));
         }
         audioCtxStartedRef.current = true;
@@ -705,7 +705,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             // iOS lock-screen play button fires this handler. The AudioContext
             // will be suspended at this point — resume it before play() so
             // audio actually routes through the gain/EQ graph instead of silence.
-            const ctxResumePromise = audioCtxRef.current?.state === "suspended"
+            const ctxResumePromise = audioCtxRef.current && audioCtxRef.current.state !== "running" && audioCtxRef.current.state !== "closed"
                 ? audioCtxRef.current.resume()
                 : Promise.resolve();
             ctxResumePromise
@@ -959,7 +959,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                         // will be suspended. Playing into a suspended context produces
                         // silence and fires handlePlaying (which clears
                         // wasPlayingBeforeHiddenRef), leaving unlock with no resume intent.
-                        const stallCtxResume = audioCtxRef.current?.state === "suspended"
+                        const stallCtxResume = audioCtxRef.current && audioCtxRef.current.state !== "running" && audioCtxRef.current.state !== "closed"
                             ? audioCtxRef.current.resume()
                             : Promise.resolve();
                         stallCtxResume.then(() => audio.play()).catch(() => {});
@@ -1006,7 +1006,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 // Do NOT gate on wasPlayingBeforeHiddenRef: handlePlaying clears that
                 // flag when iOS auto-resumes the element before visibilitychange fires,
                 // leaving the AudioContext suspended and producing silence.
-                if (audioCtxRef.current?.state === "suspended") {
+                if (audioCtxRef.current && audioCtxRef.current.state !== "running" && audioCtxRef.current.state !== "closed") {
                     audioCtxRef.current.resume()
                         .then(() => dbg(`ctx.resume() OK`))
                         .catch(e => dbg(`ctx.resume() FAILED: ${e?.name}`));
@@ -1033,7 +1033,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             if (!audioEl || !audioEl.paused) return;
             dbg(`touchstart resume | ctx=${audioCtxRef.current?.state ?? "none"}`);
             const ctx = audioCtxRef.current;
-            if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+            if (ctx && ctx.state !== "running" && ctx.state !== "closed") ctx.resume().catch(() => {});
             audioEl.play()
                 .then(() => {
                     dbg(`touchstart play() OK`);
@@ -1199,7 +1199,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         } else {
             // Resume AudioContext before playing (handles autoplay policy re-suspensions
             // and iOS post-lock AudioContext suspension).
-            const ctxResumePromise = audioCtxRef.current?.state === "suspended"
+            const ctxResumePromise = audioCtxRef.current && audioCtxRef.current.state !== "running" && audioCtxRef.current.state !== "closed"
                 ? audioCtxRef.current.resume()
                 : Promise.resolve();
             ctxResumePromise
