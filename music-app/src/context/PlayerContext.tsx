@@ -345,11 +345,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
 
         const ctx = new AudioContext({
-            // "interactive" requests the smallest OS buffer the hardware allows
-            // (~128–512 samples / 3–12 ms). "playback" requests the *largest*
-            // buffer (optimised for battery, not responsiveness), which causes
-            // audible lag on seeks and coarser crossfade transitions.
-            latencyHint: "interactive",
+            // "balanced" requests ~2048-sample OS buffers (~46 ms at 44.1 kHz).
+            // "interactive" (128–512 samples / 3–12 ms) was causing hardware
+            // buffer underruns on mobile: when the main thread is briefly busy
+            // (GC, network, React renders), the audio thread can't fill the tiny
+            // buffer in time. WebKit/Chrome compensates by temporarily slowing
+            // then speeding the render clock — heard as pitch/tempo wobble.
+            // "balanced" eliminates underruns while keeping seek latency at ~46 ms,
+            // which is imperceptible for a music player.
+            // "playback" (~16384 samples / 371 ms) is NOT used — seek latency
+            // would be audible and crossfade timing would be coarse.
+            latencyHint: "balanced",
             // Do not hardcode a sample rate — let the browser match the hardware.
             // Forcing 44100 on a 48000 Hz output device causes the OS to add a
             // software resampler, which degrades quality unnecessarily.
@@ -1174,7 +1180,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             // pipeline mid-playback and causing the pitch-shift / slowdown artefact.
             if (isTransitioningRef.current) return;
             const savedSrc = audio.src;
-            const savedTime = audio.currentTime;
             const wasPaused = audio.paused;
 
             // Cancel any prior pending recovery before scheduling a new one.
@@ -1190,7 +1195,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 // Only intervene if still stalled (readyState < HAVE_FUTURE_DATA)
                 if (audio.readyState >= 3) return;
 
-                console.warn("[Player] Stall detected, reloading from:", savedTime.toFixed(2));
+                // Capture currentTime NOW (at recovery time), not at stall-event time.
+                // The stall event fires when the download buffer runs low, but the audio
+                // element may continue playing from its decoded-data buffer for up to
+                // 3 more seconds before we intervene. If we seek to savedTime (captured
+                // at stall-event time), we seek back up to 3 s into already-heard audio.
+                // This causes the track to briefly replay then jump forward — perceived
+                // as a slowdown/rewind artefact on mobile.
+                const recoverTime = audio.currentTime;
+                console.warn("[Player] Stall detected, reloading from:", recoverTime.toFixed(2));
                 try {
                     // audio.load() fires an "abort" event synchronously; guard with
                     // isTransitioningRef so handleAbort does not set isPlaying(false)
@@ -1206,7 +1219,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                     isPreloadingRef.current = false;
                     preloadedSrcRef.current = null;
                     audio.load();
-                    audio.currentTime = savedTime;
+                    audio.currentTime = recoverTime;
                     if (!wasPaused) {
                         // Resume AudioContext before play — if the stall occurred
                         // while the page was hidden (iOS backgrounded), the context
