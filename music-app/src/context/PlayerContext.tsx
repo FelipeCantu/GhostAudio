@@ -73,8 +73,8 @@ function linearToGain(linearVolume: number): number {
 }
 
 // Preload window: start buffering next track this many seconds before end.
-// 30 s gives ample time on slow R2 connections and handles large FLAC files.
-const PRELOAD_AHEAD_SECONDS = 30;
+// Reduced from 30 to 5 seconds to prevent premature loading and hiccups
+const PRELOAD_AHEAD_SECONDS = 5;
 
 // Crossfade duration in seconds for smooth track transitions.
 // 150 ms is long enough to be a perceptibly smooth transition while short enough
@@ -210,6 +210,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // Pre-generated shuffled track order — lets us know exactly what comes next
     const shuffleQueueRef = useRef<Track[]>([]);
     const shuffleIndexRef = useRef(0);
+    // Track if preload is currently in progress to avoid multiple triggers
+    const isPreloadingRef = useRef(false);
 
     // Extract albumInfo embedded on a track (e.g. from handleShuffleAll),
     // falling back to the provided default.
@@ -501,6 +503,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             fadeTimerRef.current = null;
         }
 
+        // Reset preload flag when starting new track
+        isPreloadingRef.current = false;
+
         // ── Bootstrap AudioContext on first play (must be inside a user gesture) ─
         // ensureAudioContext() is idempotent — safe to call every time.
         const ctx = ensureAudioContext();
@@ -570,8 +575,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const track = currentTrackRef.current;
         const q = queueRef.current;
         const album = currentAlbumRef.current;
+        const audio = audioRef.current;
 
         if (!track) return;
+
+        // Don't advance if we're not actually at the end of the track
+        // This prevents the next track from starting early
+        if (audio && audio.currentTime < audio.duration - 0.5) {
+            return;
+        }
 
         if (repeatModeRef.current === "one") {
             if (audioRef.current) {
@@ -755,6 +767,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             if (audio.duration && isFinite(audio.duration) && audio.duration > 0) {
                 setDuration(audio.duration);
 
+                // Don't preload if we're already at the end
+                if (audio.currentTime >= audio.duration - 0.5) return;
+                
                 // Kick off preloading when within PRELOAD_AHEAD_SECONDS of the end.
                 // Using a second Audio element means the browser starts fetching
                 // the next file's first chunks into its HTTP cache while the
@@ -762,17 +777,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 // audio.src to the same URL, the browser serves it from cache —
                 // eliminating the network round-trip that causes gaps.
                 const remaining = audio.duration - audio.currentTime;
-                if (remaining > 0 && remaining < PRELOAD_AHEAD_SECONDS && preloadRef.current) {
+                if (remaining > 0 && remaining < PRELOAD_AHEAD_SECONDS && preloadRef.current && !isPreloadingRef.current) {
                     const nextSrc = resolveNextSrc();
                     if (nextSrc && preloadedSrcRef.current !== nextSrc) {
+                        isPreloadingRef.current = true;
                         preloadedSrcRef.current = nextSrc;
-                        preloadRef.current.src = nextSrc;
-                        preloadRef.current.load();
-                        // Electron/Chromium: preload="auto" on a localfile:// element
-                        // can trigger implicit playback via the OS audio session even
-                        // when muted=true and volume=0 are set. Explicitly pause after
-                        // load() to ensure the preload element never produces audio.
-                        preloadRef.current.pause();
+                        // Add a small delay to prevent interfering with current playback
+                        setTimeout(() => {
+                            if (preloadRef.current && preloadedSrcRef.current === nextSrc) {
+                                preloadRef.current.src = nextSrc;
+                                preloadRef.current.load();
+                                preloadRef.current.pause();
+                                isPreloadingRef.current = false;
+                            }
+                        }, 100);
                         console.log("[Player] Preloading next track:", nextSrc);
                     }
                 }
@@ -825,13 +843,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const handleEnded = () => {
             if (isTransitioningRef.current) return;
-            const track = currentTrackRef.current;
-            const album = currentAlbumRef.current;
-            if (track) {
-                incrementPlayCount(track, album);
-                addToRecentlyPlayed(track, album);
-            }
-            nextTrackFromRefsRef.current();
+            
+            // Add small delay to prevent race conditions
+            setTimeout(() => {
+                const track = currentTrackRef.current;
+                const album = currentAlbumRef.current;
+                if (track) {
+                    incrementPlayCount(track, album);
+                    addToRecentlyPlayed(track, album);
+                }
+                
+                // Check if we actually reached the end (not a false ended event)
+                if (audioRef.current && Math.abs(audioRef.current.currentTime - audioRef.current.duration) < 0.1) {
+                    nextTrackFromRefsRef.current();
+                }
+            }, 10);
         };
 
         const handleError = (e: Event) => {
@@ -974,6 +1000,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 // Snapshot intent before iOS pauses the element.
                 if (audioRef.current != null && !audioRef.current.paused) {
                     wasPlayingBeforeHiddenRef.current = true;
+                    // Also store the current track position for potential recovery
+                    const currentTime = audioRef.current.currentTime;
+                    (window as any).__savedPlaybackPosition = currentTime;
                 }
                 return;
             }
@@ -984,10 +1013,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 // wasPlayingBeforeHiddenRef: handlePlaying clears that flag when iOS
                 // auto-resumes the element before visibilitychange fires, which would
                 // leave the AudioContext suspended and produce silence.
-                if (audioCtxRef.current?.state === "suspended") {
-                    audioCtxRef.current.resume().catch(() => {});
+                const ctx = audioCtxRef.current;
+                if (ctx?.state === "suspended") {
+                    ctx.resume().catch(e => console.warn("AudioContext resume failed:", e));
                 }
-
+                
                 // If the element was paused by iOS and we were playing before lock,
                 // try to resume. On iOS this may require a user gesture (touchstart
                 // handler below handles that fallback).
@@ -997,7 +1027,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 // fallback if this is rejected.
                 if (wasPlayingBeforeHiddenRef.current && audioRef.current.paused) {
                     wasPlayingBeforeHiddenRef.current = false;
-                    audioRef.current.play().catch(() => { /* touchstart handler will retry */ });
+                    
+                    // For iOS, we need to ensure we have user interaction
+                    // Add a one-time touch handler for this specific case
+                    const playAfterResume = () => {
+                        if (audioRef.current && audioRef.current.paused) {
+                            audioRef.current.play().catch(e => {
+                                console.warn("Auto-resume failed:", e);
+                            });
+                        }
+                        document.removeEventListener('touchstart', playAfterResume);
+                    };
+                    
+                    // Try immediate play, fallback to touch handler
+                    audioRef.current.play().catch(() => {
+                        document.addEventListener('touchstart', playAfterResume, { once: true });
+                    });
                 } else {
                     wasPlayingBeforeHiddenRef.current = false;
                 }
