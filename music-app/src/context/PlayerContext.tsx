@@ -1027,15 +1027,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         // to call play() directly inside a touchstart handler, which iOS does
         // count as a user gesture. This listener is a no-op unless the resume
         // intent flag is set (i.e. iOS paused us during a lock/background).
+        // iOS PWA: audio.play() MUST be called synchronously inside the touchstart
+        // handler. Chaining it into a Promise .then() breaks the user-gesture
+        // trust — iOS sees it as unprompted autoplay and blocks it. Call both
+        // ctx.resume() and audio.play() synchronously (fire-and-forget) so iOS
+        // grants playback permission on the same call stack as the touch event.
         const handleTouchResume = () => {
             if (!wasPlayingBeforeHiddenRef.current) return;
             const audioEl = audioRef.current;
             if (!audioEl || !audioEl.paused) return;
             const ctx = audioCtxRef.current;
-            const ctxResume = ctx?.state === "suspended"
-                ? ctx.resume()
-                : Promise.resolve();
-            ctxResume.then(() => audioEl.play()).catch(() => {});
+            if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+            audioEl.play().catch(() => {});
         };
 
         audio.addEventListener("timeupdate", handleTimeUpdate);
