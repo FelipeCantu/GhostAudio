@@ -604,6 +604,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const currentIndex = q.findIndex(t => t.audio_file === track.audio_file);
 
+        if (currentIndex === -1) {
+            setIsPlaying(false);
+            setProgress(0);
+            return;
+        }
+
         if (currentIndex < q.length - 1) {
             const next = q[currentIndex + 1];
             playTrackInternal(next, resolveAlbum(next, album), q);
@@ -818,6 +824,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         };
 
         const handleEnded = () => {
+            if (isTransitioningRef.current) return;
             const track = currentTrackRef.current;
             const album = currentAlbumRef.current;
             if (track) {
@@ -984,10 +991,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 // If the element was paused by iOS and we were playing before lock,
                 // try to resume. On iOS this may require a user gesture (touchstart
                 // handler below handles that fallback).
+                // IMPORTANT: play() must be called synchronously here — chaining it
+                // into a Promise .then() breaks iOS user-gesture trust and results in
+                // a NotAllowedError. Call fire-and-forget; touchstart handles the
+                // fallback if this is rejected.
                 if (wasPlayingBeforeHiddenRef.current && audioRef.current.paused) {
-                    audioRef.current.play()
-                        .then(() => { wasPlayingBeforeHiddenRef.current = false; })
-                        .catch(() => { /* touchstart handler will retry */ });
+                    wasPlayingBeforeHiddenRef.current = false;
+                    audioRef.current.play().catch(() => { /* touchstart handler will retry */ });
                 } else {
                     wasPlayingBeforeHiddenRef.current = false;
                 }
