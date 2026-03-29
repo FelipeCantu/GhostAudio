@@ -236,6 +236,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const gainBRef = useRef<GainNode | null>(null);
     const sourceBRef = useRef<MediaElementAudioSourceNode | null>(null);
     const usingPreloadBridgeRef = useRef(false);
+    // True while the gapless bridge seek is in-flight (between setting
+    // audio.currentTime and the resulting 'seeked' event). During this window,
+    // 'ended' and 'pause' events are suppressed — seeking a freshly loaded element
+    // near the beginning occasionally triggers a spurious ended event in Chromium
+    // if the new track's metadata hasn't been parsed yet.
+    const bridgeSeekingRef = useRef(false);
 
     // Extract albumInfo embedded on a track (e.g. from handleShuffleAll),
     // falling back to the provided default.
@@ -590,8 +596,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             fadeTimerRef.current = null;
         }
 
-        // Reset preload flag when starting new track
+        // Reset preload and bridge flags when starting new track
         isPreloadingRef.current = false;
+        // Clear bridge seek guard — if a prior bridge seek was in-flight when the
+        // user manually skipped to a new track, that seek is now irrelevant and we
+        // must not suppress events for the incoming track.
+        bridgeSeekingRef.current = false;
+        usingPreloadBridgeRef.current = false;
 
         // ── Bootstrap AudioContext on first play (must be inside a user gesture) ─
         // ensureAudioContext() is idempotent — safe to call every time.
@@ -859,10 +870,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                               // Chromium/Electron audio routing paths for custom protocols
         preloadRef.current = preload;
 
+        // Track last reported duration to avoid redundant React state updates.
+        // setDuration fires a re-render; calling it on every timeupdate (4–8 Hz)
+        // when duration hasn't changed adds unnecessary GC and render pressure.
+        let lastReportedDuration = 0;
+
         const handleTimeUpdate = () => {
             setProgress(audio.currentTime);
             if (audio.duration && isFinite(audio.duration) && audio.duration > 0) {
-                setDuration(audio.duration);
+                if (audio.duration !== lastReportedDuration) {
+                    lastReportedDuration = audio.duration;
+                    setDuration(audio.duration);
+                }
 
                 // Don't preload if we're already at the end
                 if (audio.currentTime >= audio.duration - 0.5) return;
@@ -928,6 +947,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const handleEnded = () => {
             if (isTransitioningRef.current) return;
+            // Suppress spurious 'ended' during the gapless bridge seek. Chromium can
+            // fire 'ended' before 'seeked' when seeking a freshly-loaded element whose
+            // duration hasn't been parsed yet. The seek is intentional; ignore it.
+            if (bridgeSeekingRef.current) {
+                dbg(`ended IGNORED (bridge seek in flight)`);
+                return;
+            }
             dbg(`ended | track="${currentTrackRef.current?.title}"`);
             const track = currentTrackRef.current;
             const album = currentAlbumRef.current;
@@ -962,36 +988,69 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 connectElementToGraph(audio);
             }
 
-            // Complete the gapless bridge: primary is now playing from the cache.
-            // Sync its position to where the preload element currently is, then
-            // cut gainB to 0 and restore the primary gain. WAV files support
-            // instant seeking (byte-addressed PCM), so the seek is glitch-free.
+            // Complete the gapless bridge: primary element is now decoded and playing
+            // from the HTTP cache. Sync its position to the preload element's current
+            // playhead, then — AFTER the seek lands ('seeked' event) — cut gainB to 0
+            // and let the primary take over.
+            //
+            // We must NOT do the gainB cutover synchronously here. Setting
+            // audio.currentTime on a freshly-loaded element emits 'seeking', then
+            // 'seeked'. In Chromium, if the element's duration hasn't been parsed yet
+            // when the seek fires, the browser can emit a spurious 'ended' event
+            // before 'seeked'. Deferring the cutover to 'seeked' ensures the element
+            // is in a stable state before we mute the bridge and expose the primary.
             if (usingPreloadBridgeRef.current) {
                 const preload = preloadRef.current;
                 const ctx = audioCtxRef.current;
                 const gainB = gainBRef.current;
                 const gainNode = gainNodeRef.current;
                 if (preload && ctx && gainB && gainNode) {
-                    audio.currentTime = preload.currentTime;
-                    const now = ctx.currentTime;
-                    const target = linearToGain(volumeRef.current);
-                    gainNode.gain.cancelScheduledValues(now);
-                    gainNode.gain.setValueAtTime(target, now);
-                    gainB.gain.cancelScheduledValues(now);
-                    gainB.gain.setValueAtTime(0, now);
-                    preload.pause();
-                    preload.muted = true;
-                    dbg(`gapless bridge: handed off at ${preload.currentTime.toFixed(3)} s`);
+                    // Snapshot the preload position before any async gap
+                    const syncTime = preload.currentTime;
+                    dbg(`gapless bridge: seeking primary to ${syncTime.toFixed(3)} s`);
+                    // Flag so 'ended' and 'pause' events fired during the seek are
+                    // suppressed — we are in a deliberate in-flight seek.
+                    bridgeSeekingRef.current = true;
+                    audio.currentTime = syncTime;
+                    // The 'seeked' handler below will complete the cutover.
                 }
-                usingPreloadBridgeRef.current = false;
-                preloadedSrcRef.current = null;
-                isPreloadingRef.current = false;
             }
+        };
+
+        // Fired when audio.currentTime assignment completes (decode pipeline stable).
+        // This is where we safely complete the gapless bridge handoff.
+        const handleSeeked = () => {
+            if (!bridgeSeekingRef.current) return;
+            bridgeSeekingRef.current = false;
+            const preload = preloadRef.current;
+            const ctx = audioCtxRef.current;
+            const gainB = gainBRef.current;
+            const gainNode = gainNodeRef.current;
+            if (preload && ctx && gainB && gainNode) {
+                const now = ctx.currentTime;
+                const target = linearToGain(volumeRef.current);
+                gainNode.gain.cancelScheduledValues(now);
+                gainNode.gain.setValueAtTime(target, now);
+                gainB.gain.cancelScheduledValues(now);
+                gainB.gain.setValueAtTime(0, now);
+                preload.pause();
+                preload.muted = true;
+                dbg(`gapless bridge: handed off (seeked) at ${audio.currentTime.toFixed(3)} s`);
+            }
+            usingPreloadBridgeRef.current = false;
+            preloadedSrcRef.current = null;
+            isPreloadingRef.current = false;
         };
 
         const handlePause = () => {
             if (isTransitioningRef.current) {
                 dbg(`pause IGNORED (transitioning)`);
+                return;
+            }
+            // Suppress pause events fired during the gapless bridge seek. The browser
+            // may emit a transient 'pause' between 'seeking' and 'seeked'.
+            if (bridgeSeekingRef.current) {
+                dbg(`pause IGNORED (bridge seek in flight)`);
                 return;
             }
             // Browser fires pause then ended when a track finishes naturally.
@@ -1019,6 +1078,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         // stalled element does nothing in some Chromium versions.
         const handleStalled = () => {
             if (audioRef.current !== audio) return;
+            // A stall during a track transition (src reassignment) is expected and
+            // benign — the browser aborts the previous request and starts the new
+            // one, which briefly looks like a stall. Scheduling a reload here would
+            // call audio.load() on the new src 3 seconds later, resetting the decode
+            // pipeline mid-playback and causing the pitch-shift / slowdown artefact.
+            if (isTransitioningRef.current) return;
             const savedSrc = audio.src;
             const savedTime = audio.currentTime;
             const wasPaused = audio.paused;
@@ -1046,6 +1111,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                     // re-init after the reload. handlePlaying's setTimeout(300) will
                     // clear the flag once the pipeline has stabilised.
                     isTransitioningRef.current = true;
+                    // Reset preload state — after a real stall recovery the preload
+                    // element's buffer is stale. Clearing these flags lets
+                    // handleTimeUpdate trigger a fresh preload once playback resumes.
+                    isPreloadingRef.current = false;
+                    preloadedSrcRef.current = null;
                     audio.load();
                     audio.currentTime = savedTime;
                     if (!wasPaused) {
@@ -1150,6 +1220,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         audio.addEventListener("error", handleError);
         audio.addEventListener("waiting", handleWaiting);
         audio.addEventListener("playing", handlePlaying);
+        audio.addEventListener("seeked", handleSeeked);
         audio.addEventListener("pause", handlePause);
         audio.addEventListener("suspend", handleSuspend);
         audio.addEventListener("stalled", handleStalled);
@@ -1159,6 +1230,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         return () => {
             isUserPauseRef.current = true; // cleanup pause is not a system pause
+            // Clear bridge seek flag so any in-flight seek doesn't leave stale state
+            bridgeSeekingRef.current = false;
+            usingPreloadBridgeRef.current = false;
             audio.pause();
             audio.src = "";
             if (preloadRef.current) {
@@ -1216,6 +1290,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             audio.removeEventListener("error", handleError);
             audio.removeEventListener("waiting", handleWaiting);
             audio.removeEventListener("playing", handlePlaying);
+            audio.removeEventListener("seeked", handleSeeked);
             audio.removeEventListener("pause", handlePause);
             audio.removeEventListener("suspend", handleSuspend);
             audio.removeEventListener("stalled", handleStalled);
