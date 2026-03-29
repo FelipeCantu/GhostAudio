@@ -228,6 +228,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const shuffleIndexRef = useRef(0);
     // Track if preload is currently in progress to avoid multiple triggers
     const isPreloadingRef = useRef(false);
+    // Gapless bridge: second GainNode + MediaElementSourceNode for the preload element.
+    // gainB sits in parallel with gainNodeRef, both feeding into eqLow (additive mix).
+    // Normally gainB.gain = 0 (silent). At track end, gainB is raised immediately so
+    // the preload element covers the ~30 ms gap while the primary element reloads from
+    // cache. Once the primary fires `playing`, we sync its position and cut gainB to 0.
+    const gainBRef = useRef<GainNode | null>(null);
+    const sourceBRef = useRef<MediaElementAudioSourceNode | null>(null);
+    const usingPreloadBridgeRef = useRef(false);
 
     // Extract albumInfo embedded on a track (e.g. from handleShuffleAll),
     // falling back to the provided default.
@@ -379,6 +387,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         analyser.connect(limiter);
         limiter.connect(ctx.destination);
 
+        // GainB: parallel silent path for the preload element. Also feeds eqLow so
+        // the preload audio goes through EQ + limiter when the bridge is active.
+        const gainB = ctx.createGain();
+        gainB.gain.value = 0;
+        gainB.connect(eqLow);
+        gainBRef.current = gainB;
+
         audioCtxRef.current  = ctx;
         gainNodeRef.current  = gainNode;
         eqLowRef.current     = eqLow;
@@ -451,6 +466,26 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         sourceNodeRef.current = sourceNode;
         // Tag the element so we know it's been connected to this context
         (el as unknown as Record<string, unknown>).__audioCtxConnected = ctx;
+    }
+
+    // Connect the preload element into the secondary (gainB) audio graph path.
+    // Mirrors connectElementToGraph but targets gainBRef. Called when the preload
+    // element finishes buffering so it's ready for instant gapless activation.
+    function connectPreloadToGraph(preload: HTMLAudioElement): void {
+        const ctx = audioCtxRef.current;
+        const gainB = gainBRef.current;
+        if (!ctx || !gainB) return;
+        // Guard: each element can only have one MediaElementSourceNode per context.
+        const tracked = (preload as unknown as Record<string, unknown>).__audioCtxConnectedB;
+        if (tracked === ctx) return;
+        if (sourceBRef.current) {
+            try { sourceBRef.current.disconnect(); } catch { /* already disconnected */ }
+            sourceBRef.current = null;
+        }
+        const sourceB = ctx.createMediaElementSource(preload);
+        sourceB.connect(gainB);
+        sourceBRef.current = sourceB;
+        (preload as unknown as Record<string, unknown>).__audioCtxConnectedB = ctx;
     }
 
     // Keep refs in sync with state
@@ -544,7 +579,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setIsPlaying(true);
         setIsLoading(true);
         setError(null);
-        setProgress(0);
+        // setProgress(0) is intentionally omitted: the old track's position is kept
+        // visible while the new track loads (~30 ms). duration=0 makes displayPercent
+        // evaluate to 0 % via the NaN guard in PlayerBar, so the bar still reads empty.
         setDuration(0);
 
         // Cancel any in-progress fade
@@ -596,17 +633,35 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             }
         }
 
-        // Set the new source. The browser will load from cache if the preload
-        // element already fetched this URL (same-origin or CORS-cached).
-        audio.src = src;
+        // ── Gapless bridge ─────────────────────────────────────────────────────
+        // If the preload element has this src buffered AND is wired into gainB,
+        // raise gainB immediately so audio plays without interruption. The primary
+        // element still reloads from cache in the background; handlePlaying will
+        // sync its position to the preload's and cut the bridge (~30 ms later).
+        const preload = preloadRef.current;
+        const gainB = gainBRef.current;
+        const bridgeReady = preload && gainB &&
+            preloadedSrcRef.current === src &&
+            preload.readyState >= 3 &&
+            (preload as unknown as Record<string, unknown>).__audioCtxConnectedB === audioCtxRef.current;
 
+        if (bridgeReady) {
+            dbg(`gapless bridge: activating preload for "${track.title}"`);
+            const now = ctx.currentTime;
+            const target = linearToGain(volumeRef.current);
+            gainB.gain.cancelScheduledValues(now);
+            gainB.gain.setValueAtTime(target, now);
+            preload!.muted = false;
+            preload!.volume = 1;
+            preload!.play().catch(e => { if (e.name !== "AbortError") console.error("[Player] Bridge play failed:", e); });
+            usingPreloadBridgeRef.current = true;
+        }
+
+        // Always load the primary element from cache — in the bridge case this
+        // runs concurrently and handlePlaying completes the handoff; in the normal
+        // case this is the only playback path.
+        audio.src = src;
         audio.play().catch(e => {
-            // AbortError means a *prior* play() was interrupted by the src change —
-            // not a failure of this play call. Clearing the transition guard here
-            // would let the spurious pause event from the abort reach handlePause
-            // and set isPlaying(false) before handlePlaying fires. Guard is cleared
-            // by handlePlaying's setTimeout(0) in the normal path, or left for the
-            // error branch below.
             if (e.name === "AbortError") return;
             isTransitioningRef.current = false;
             console.error("[Player] Playback failed:", e);
@@ -831,6 +886,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                                 preloadRef.current.load();
                                 preloadRef.current.pause();
                                 isPreloadingRef.current = false;
+                                // Connect preload element to gainB so it's wired
+                                // into the graph and ready for gapless activation.
+                                if (audioCtxStartedRef.current) {
+                                    connectPreloadToGraph(preloadRef.current);
+                                }
                             }
                         }, 100);
                         console.log("[Player] Preloading next track:", nextSrc);
@@ -900,6 +960,32 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             wasPlayingBeforeHiddenRef.current = false;
             if (audioCtxStartedRef.current) {
                 connectElementToGraph(audio);
+            }
+
+            // Complete the gapless bridge: primary is now playing from the cache.
+            // Sync its position to where the preload element currently is, then
+            // cut gainB to 0 and restore the primary gain. WAV files support
+            // instant seeking (byte-addressed PCM), so the seek is glitch-free.
+            if (usingPreloadBridgeRef.current) {
+                const preload = preloadRef.current;
+                const ctx = audioCtxRef.current;
+                const gainB = gainBRef.current;
+                const gainNode = gainNodeRef.current;
+                if (preload && ctx && gainB && gainNode) {
+                    audio.currentTime = preload.currentTime;
+                    const now = ctx.currentTime;
+                    const target = linearToGain(volumeRef.current);
+                    gainNode.gain.cancelScheduledValues(now);
+                    gainNode.gain.setValueAtTime(target, now);
+                    gainB.gain.cancelScheduledValues(now);
+                    gainB.gain.setValueAtTime(0, now);
+                    preload.pause();
+                    preload.muted = true;
+                    dbg(`gapless bridge: handed off at ${preload.currentTime.toFixed(3)} s`);
+                }
+                usingPreloadBridgeRef.current = false;
+                preloadedSrcRef.current = null;
+                isPreloadingRef.current = false;
             }
         };
 
@@ -1093,6 +1179,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             if (gainNodeRef.current) {
                 try { gainNodeRef.current.disconnect(); } catch { /* ignore */ }
                 gainNodeRef.current = null;
+            }
+            if (sourceBRef.current) {
+                try { sourceBRef.current.disconnect(); } catch { /* ignore */ }
+                sourceBRef.current = null;
+            }
+            if (gainBRef.current) {
+                try { gainBRef.current.disconnect(); } catch { /* ignore */ }
+                gainBRef.current = null;
             }
             for (const ref of [eqLowRef, eqMidRef, eqHighRef]) {
                 if (ref.current) {
