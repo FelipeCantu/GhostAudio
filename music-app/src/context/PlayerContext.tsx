@@ -55,6 +55,19 @@ interface PlayerContextType {
     // Volume normalisation
     normalise: boolean;
     toggleNormalise: () => void;
+    // Debug
+    getDebugSnapshot: () => AudioDebugSnapshot;
+}
+
+export interface AudioDebugSnapshot {
+    ctxState: string;
+    elementPaused: boolean;
+    elementSrc: string;
+    elementTime: number;
+    wasPlayingBeforeHidden: boolean;
+    isUserPause: boolean;
+    isTransitioning: boolean;
+    logs: string[];
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -198,6 +211,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // distinguish system-initiated pauses (where it must set wasPlayingBeforeHiddenRef)
     // from user-initiated pauses (where it must not, so we don't auto-resume).
     const isUserPauseRef = useRef(false);
+
+    // ── Debug logger ──────────────────────────────────────────────────────────
+    const debugLogsRef = useRef<string[]>([]);
+    const dbg = useCallback((msg: string) => {
+        const ts = new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
+        const entry = `${ts} ${msg}`;
+        console.log("[GhostAudio]", entry);
+        debugLogsRef.current = [...debugLogsRef.current.slice(-49), entry];
+    }, []);
+
     // Volume ref (always tracks latest user volume, avoids stale closures)
     const fadeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const volumeRef = useRef(volume);
@@ -262,6 +285,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 next = track;
             } else {
                 const idx = q.findIndex(t => t.audio_file === track.audio_file);
+                if (idx === -1) return null;
                 if (idx < q.length - 1) next = q[idx + 1];
                 else if (repeatModeRef.current === "all") next = q[0];
             }
@@ -579,12 +603,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (!track) return;
 
-        // Don't advance if we're not actually at the end of the track
-        // This prevents the next track from starting early
-        if (audio && audio.currentTime < audio.duration - 0.5) {
-            return;
-        }
-
         if (repeatModeRef.current === "one") {
             if (audioRef.current) {
                 audioRef.current.currentTime = 0;
@@ -617,6 +635,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const currentIndex = q.findIndex(t => t.audio_file === track.audio_file);
 
         if (currentIndex === -1) {
+            dbg(`nextTrack: track not found in queue (audio_file mismatch?) → stopping`);
             setIsPlaying(false);
             setProgress(0);
             return;
@@ -624,10 +643,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         if (currentIndex < q.length - 1) {
             const next = q[currentIndex + 1];
+            dbg(`nextTrack: ${currentIndex} → ${currentIndex + 1} "${next.title}"`);
             playTrackInternal(next, resolveAlbum(next, album), q);
         } else if (repeatModeRef.current === "all") {
+            dbg(`nextTrack: end of queue → repeat all → q[0] "${q[0].title}"`);
             playTrackInternal(q[0], resolveAlbum(q[0], album), q);
         } else {
+            dbg(`nextTrack: end of queue → stopping`);
             setIsPlaying(false);
             setProgress(0);
         }
@@ -843,21 +865,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const handleEnded = () => {
             if (isTransitioningRef.current) return;
-            
-            // Add small delay to prevent race conditions
-            setTimeout(() => {
-                const track = currentTrackRef.current;
-                const album = currentAlbumRef.current;
-                if (track) {
-                    incrementPlayCount(track, album);
-                    addToRecentlyPlayed(track, album);
-                }
-                
-                // Check if we actually reached the end (not a false ended event)
-                if (audioRef.current && Math.abs(audioRef.current.currentTime - audioRef.current.duration) < 0.1) {
-                    nextTrackFromRefsRef.current();
-                }
-            }, 10);
+            dbg(`ended | track="${currentTrackRef.current?.title}"`);
+            const track = currentTrackRef.current;
+            const album = currentAlbumRef.current;
+            if (track) {
+                incrementPlayCount(track, album);
+                addToRecentlyPlayed(track, album);
+            }
+            nextTrackFromRefsRef.current();
         };
 
         const handleError = (e: Event) => {
@@ -873,51 +888,30 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const handleWaiting = () => setIsLoading(true);
 
         const handlePlaying = () => {
-            // Defer clearing the transition guard. Chromium fires spurious "pause"
-            // events both in the same microtask flush as "playing" AND a few
-            // milliseconds later during decode-pipeline warmup (the audio thread
-            // briefly stalls before the first decoded frame is queued). A setTimeout(0)
-            // only guards the same-task case; the post-playing pipeline pause fires
-            // after the macrotask boundary and still reaches handlePause unguarded.
-            // 300 ms covers the full Chromium pipeline init window without being
-            // long enough to cause a perceptible delay on genuine user pauses
-            // (a user pause within 300 ms of a track starting is indistinguishable
-            // from an immediate pause for practical purposes).
+            const ctxState = audioCtxRef.current?.state ?? "none";
+            dbg(`playing | ctx=${ctxState} wasHidden=${wasPlayingBeforeHiddenRef.current}`);
             setTimeout(() => { isTransitioningRef.current = false; }, 300);
             setIsLoading(false);
             setError(null);
             setIsPlaying(true);
-
-            // If audio recovers from a system pause without us doing anything
-            // (e.g. Chromium pipeline stall that resolved itself, or iOS resuming
-            // audio without a visibilitychange cycle), clear the resume intent so
-            // we don't double-resume on the next unlock.
             wasPlayingBeforeHiddenRef.current = false;
-
-            // Connect to audio graph if we missed canplay (e.g. src set before
-            // AudioContext was initialised and canplay already fired).
             if (audioCtxStartedRef.current) {
                 connectElementToGraph(audio);
             }
         };
 
         const handlePause = () => {
-            if (isTransitioningRef.current) return;
-
-            // isUserPauseRef is set by togglePlay / mediaSession pause / sleep timer
-            // immediately before calling audio.pause(). If it's set, this is a
-            // deliberate user pause — do NOT flag intent to resume.
+            if (isTransitioningRef.current) {
+                dbg(`pause IGNORED (transitioning)`);
+                return;
+            }
             if (isUserPauseRef.current) {
+                dbg(`pause user-initiated`);
                 isUserPauseRef.current = false;
                 setIsPlaying(false);
                 return;
             }
-
-            // System-initiated pause (iOS screen lock, Android backgrounding, or
-            // Chromium pipeline stall). iOS timing: the "pause" event fires while
-            // document.visibilityState is still "visible" — BEFORE "visibilitychange"
-            // fires. We cannot rely on checking visibilityState here.
-            // Set the flag so handleVisibilityChange knows to auto-resume on unlock.
+            dbg(`pause SYSTEM | vis=${document.visibilityState} ctx=${audioCtxRef.current?.state ?? "none"} → wasHidden=true`);
             wasPlayingBeforeHiddenRef.current = true;
             setIsPlaying(false);
         };
@@ -996,77 +990,56 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         //      the flag when the page becomes visible and audio is still paused,
         //      meaning the user actually meant to pause.
         const handleVisibilityChange = () => {
+            const ctxState = audioCtxRef.current?.state ?? "none";
             if (document.visibilityState === "hidden") {
-                // Snapshot intent before iOS pauses the element.
-                if (audioRef.current != null && !audioRef.current.paused) {
-                    wasPlayingBeforeHiddenRef.current = true;
-                    // Also store the current track position for potential recovery
-                    const currentTime = audioRef.current.currentTime;
-                    (window as any).__savedPlaybackPosition = currentTime;
-                }
+                const playing = audioRef.current != null && !audioRef.current.paused;
+                dbg(`visibility→hidden | elPlaying=${playing} ctx=${ctxState}`);
+                if (playing) wasPlayingBeforeHiddenRef.current = true;
                 return;
             }
 
             if (document.visibilityState === "visible" && audioRef.current) {
-                // Always resume the AudioContext — iOS suspends it on every background
-                // regardless of whether the element was paused. Do NOT gate this on
-                // wasPlayingBeforeHiddenRef: handlePlaying clears that flag when iOS
-                // auto-resumes the element before visibilitychange fires, which would
-                // leave the AudioContext suspended and produce silence.
-                const ctx = audioCtxRef.current;
-                if (ctx?.state === "suspended") {
-                    ctx.resume().catch(e => console.warn("AudioContext resume failed:", e));
+                const elPaused = audioRef.current.paused;
+                dbg(`visibility→visible | elPaused=${elPaused} ctx=${ctxState} wasHidden=${wasPlayingBeforeHiddenRef.current}`);
+
+                // Always resume AudioContext — iOS suspends it on every background.
+                // Do NOT gate on wasPlayingBeforeHiddenRef: handlePlaying clears that
+                // flag when iOS auto-resumes the element before visibilitychange fires,
+                // leaving the AudioContext suspended and producing silence.
+                if (audioCtxRef.current?.state === "suspended") {
+                    audioCtxRef.current.resume()
+                        .then(() => dbg(`ctx.resume() OK`))
+                        .catch(e => dbg(`ctx.resume() FAILED: ${e?.name}`));
                 }
-                
-                // If the element was paused by iOS and we were playing before lock,
-                // try to resume. On iOS this may require a user gesture (touchstart
-                // handler below handles that fallback).
-                // IMPORTANT: play() must be called synchronously here — chaining it
-                // into a Promise .then() breaks iOS user-gesture trust and results in
-                // a NotAllowedError. Call fire-and-forget; touchstart handles the
-                // fallback if this is rejected.
-                if (wasPlayingBeforeHiddenRef.current && audioRef.current.paused) {
-                    wasPlayingBeforeHiddenRef.current = false;
-                    
-                    // For iOS, we need to ensure we have user interaction
-                    // Add a one-time touch handler for this specific case
-                    const playAfterResume = () => {
-                        if (audioRef.current && audioRef.current.paused) {
-                            audioRef.current.play().catch(e => {
-                                console.warn("Auto-resume failed:", e);
-                            });
-                        }
-                        document.removeEventListener('touchstart', playAfterResume);
-                    };
-                    
-                    // Try immediate play, fallback to touch handler
-                    audioRef.current.play().catch(() => {
-                        document.addEventListener('touchstart', playAfterResume, { once: true });
-                    });
+
+                if (wasPlayingBeforeHiddenRef.current && elPaused) {
+                    // play() called synchronously — required for iOS gesture trust.
+                    // Flag cleared only on success so handleTouchResume can retry.
+                    audioRef.current.play()
+                        .then(() => {
+                            dbg(`play() after unlock OK`);
+                            wasPlayingBeforeHiddenRef.current = false;
+                        })
+                        .catch(e => dbg(`play() after unlock FAILED: ${e?.name} → touchstart will retry`));
                 } else {
                     wasPlayingBeforeHiddenRef.current = false;
                 }
             }
         };
 
-        // iOS PWA: audio.play() called from a visibilitychange handler or a
-        // Promise .then() is NOT a user gesture — Safari rejects it with
-        // NotAllowedError. The only reliable way to resume after screen lock is
-        // to call play() directly inside a touchstart handler, which iOS does
-        // count as a user gesture. This listener is a no-op unless the resume
-        // intent flag is set (i.e. iOS paused us during a lock/background).
-        // iOS PWA: audio.play() MUST be called synchronously inside the touchstart
-        // handler. Chaining it into a Promise .then() breaks the user-gesture
-        // trust — iOS sees it as unprompted autoplay and blocks it. Call both
-        // ctx.resume() and audio.play() synchronously (fire-and-forget) so iOS
-        // grants playback permission on the same call stack as the touch event.
         const handleTouchResume = () => {
             if (!wasPlayingBeforeHiddenRef.current) return;
             const audioEl = audioRef.current;
             if (!audioEl || !audioEl.paused) return;
+            dbg(`touchstart resume | ctx=${audioCtxRef.current?.state ?? "none"}`);
             const ctx = audioCtxRef.current;
             if (ctx?.state === "suspended") ctx.resume().catch(() => {});
-            audioEl.play().catch(() => {});
+            audioEl.play()
+                .then(() => {
+                    dbg(`touchstart play() OK`);
+                    wasPlayingBeforeHiddenRef.current = false;
+                })
+                .catch(e => dbg(`touchstart play() FAILED: ${e?.name}`));
         };
 
         audio.addEventListener("timeupdate", handleTimeUpdate);
@@ -1394,6 +1367,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             getAnalyser,
             normalise,
             toggleNormalise,
+            getDebugSnapshot: () => ({
+                ctxState: audioCtxRef.current?.state ?? "none",
+                elementPaused: audioRef.current?.paused ?? true,
+                elementSrc: (audioRef.current?.src ?? "").split("/").pop() ?? "",
+                elementTime: audioRef.current?.currentTime ?? 0,
+                wasPlayingBeforeHidden: wasPlayingBeforeHiddenRef.current,
+                isUserPause: isUserPauseRef.current,
+                isTransitioning: isTransitioningRef.current,
+                logs: [...debugLogsRef.current],
+            }),
         }}>
             {children}
         </PlayerContext.Provider>

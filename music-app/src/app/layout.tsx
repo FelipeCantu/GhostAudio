@@ -7,6 +7,7 @@ import { ImportProvider } from "@/context/ImportContext";
 import { PlaylistProvider } from "@/context/PlaylistContext";
 import PlayerBar from "@/components/PlayerBar";
 import PWARegister from "@/components/PWARegister";
+import AudioDebugOverlay from "@/components/AudioDebugOverlay";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -75,6 +76,7 @@ export default function RootLayout({
               <PlayerProvider>
                 {children}
                 <PlayerBar />
+                <AudioDebugOverlay />
               </PlayerProvider>
             </ImportProvider>
           </PlaylistProvider>
