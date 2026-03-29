@@ -589,25 +589,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         isTransitioningRef.current = true;
 
-        // Silence the gain node immediately before src reassignment so that the
-        // new track's first decoded frames cannot bleed through at non-zero gain.
-        // A ramp-to-zero was used here previously, but because audio.src is set
-        // AFTER the ramp is scheduled (not after it completes), the new track
-        // starts producing audio while the gain is still mid-ramp — causing an
-        // audible snippet of the new track to leak through before canplay fires
-        // the proper fade-in. Hard-cutting to 0 here closes that window entirely.
-        // The fade-in is handled in handleCanPlay via exponentialRampToValueAtTime.
-        if (gainNodeRef.current && ctx.state === "running") {
-            const now = ctx.currentTime;
-            gainNodeRef.current.gain.cancelScheduledValues(now);
-            gainNodeRef.current.gain.setValueAtTime(0, now); // hard-cut: no bleed before canplay
+        // Restore gain to the user's current volume level before src assignment.
+        // Cancels any in-flight ramp (e.g. from a prior crossfade) so the new
+        // track starts at full volume immediately with no fade-in.
+        if (gainNodeRef.current) {
+            const target = linearToGain(volumeRef.current);
+            if (ctx.state === "running") {
+                const now = ctx.currentTime;
+                gainNodeRef.current.gain.cancelScheduledValues(now);
+                gainNodeRef.current.gain.setValueAtTime(target, now);
+            } else {
+                gainNodeRef.current.gain.value = target;
+            }
         }
-
-        // Mark fade-in as pending BEFORE setting src. On cached/buffered tracks
-        // the browser fires canplay synchronously during src assignment, so the
-        // flag must be set first — otherwise handleCanPlay sees it as false and
-        // skips the gain ramp, leaving audio silent at gain=0 permanently.
-        (audio as unknown as Record<string, unknown>).__pendingFadeIn = true;
 
         // Set the new source. The browser will load from cache if the preload
         // element already fetched this URL (same-origin or CORS-cached).
@@ -877,23 +871,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 connectElementToGraph(audio);
             }
 
-            // If we scheduled a fade-in for this element (set by playTrackInternal),
-            // ramp the gain back up to the user's volume level now that audio data
-            // is ready and the source node is connected. This completes the
-            // click-prevention crossfade.
-            const pendingFadeIn = (audio as unknown as Record<string, unknown>).__pendingFadeIn;
-            if (pendingFadeIn && gainNodeRef.current && audioCtxRef.current) {
-                const ctx = audioCtxRef.current;
-                const now = ctx.currentTime;
-                const targetGain = linearToGain(volumeRef.current);
-                gainNodeRef.current.gain.cancelScheduledValues(now);
-                // Start from near-silent (exponential ramp cannot start from 0)
-                gainNodeRef.current.gain.setValueAtTime(0.0001, now);
-                gainNodeRef.current.gain.exponentialRampToValueAtTime(
-                    Math.max(targetGain, 0.0001), now + CROSSFADE_DURATION
-                );
-                (audio as unknown as Record<string, unknown>).__pendingFadeIn = false;
-            }
         };
 
         const handleEnded = () => {
