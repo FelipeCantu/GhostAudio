@@ -181,6 +181,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // Whether the AudioContext has been started via a user gesture
     const audioCtxStartedRef = useRef(false);
 
+    // ── Mobile-specific watchdog refs ─────────────────────────────────────────
+    // iOS WebKit silently drops network fetches without firing 'stalled'.
+    // We track the last time timeupdate fired to detect silence periods.
+    // If playback appears to be running but no timeupdate has arrived for
+    // TIMEUPDATE_WATCHDOG_MS, we treat it as a stall and run recovery.
+    const lastTimeUpdateRef = useRef<number>(0);
+    const stallWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    // Mobile network change recovery: when the device reconnects (WiFi → cell,
+    // cell → WiFi, airplane mode off) the audio element's pending network
+    // request is silently dropped. We hook the 'online' event to force a
+    // reload+seek if the element is stalled at that moment.
+    const onlineRecoveryBoundRef = useRef(false);
+
     const currentTrackRef = useRef<Track | null>(null);
     const currentAlbumRef = useRef<AlbumInfo | null>(null);
     const queueRef = useRef<Track[]>([]);
@@ -423,20 +436,33 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 // Succeeds on iOS 16+ in some scenarios (e.g. app switch without
                 // a phone call). Fails silently if iOS rejects it.
                 ctx.resume().catch(() => {});
+                // Mark playing intent so the running→ handler below can resume
+                // the element if the context recovers (e.g. interruption rejected
+                // and context transitions interrupted→running directly).
+                const audioEl = audioRef.current;
+                if (audioEl && !audioEl.paused) {
+                    wasPlayingBeforeHiddenRef.current = true;
+                }
                 return;
             }
-            if (ctx.state === 'running' && wasPlayingBeforeHiddenRef.current) {
-                const audioEl = audioRef.current;
-                if (audioEl && audioEl.paused) {
-                    audioEl.play()
-                        .then(() => {
-                            dbg('statechange resume play() OK');
-                            wasPlayingBeforeHiddenRef.current = false;
-                        })
-                        .catch(e => dbg(`statechange resume play() FAILED: ${e?.name}`));
-                } else {
-                    // Element still playing (audio uninterrupted on some devices)
-                    wasPlayingBeforeHiddenRef.current = false;
+            if (ctx.state === 'running') {
+                // Context recovered — could be from: interrupted, suspended,
+                // or any other non-running state. Always try to resume the
+                // element if we had playing intent, regardless of which
+                // interrupted path brought us here.
+                if (wasPlayingBeforeHiddenRef.current) {
+                    const audioEl = audioRef.current;
+                    if (audioEl && audioEl.paused) {
+                        audioEl.play()
+                            .then(() => {
+                                dbg('statechange resume play() OK');
+                                wasPlayingBeforeHiddenRef.current = false;
+                            })
+                            .catch(e => dbg(`statechange resume play() FAILED: ${e?.name}`));
+                    } else {
+                        // Element still playing (audio uninterrupted on some devices)
+                        wasPlayingBeforeHiddenRef.current = false;
+                    }
                 }
             }
         });
@@ -857,6 +883,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         // a SecurityError. For localfile:// URLs this has no effect.
         // NOTE: R2 bucket must serve Access-Control-Allow-Origin: * headers.
         audio.crossOrigin = "anonymous";
+        // playsInline: prevents iOS Safari / iOS PWA from ejecting the audio
+        // element into a fullscreen native player. Without this, iOS can
+        // intercept the playback session and disconnect our Web Audio graph
+        // (MediaElementSourceNode is destroyed when iOS takes over).
+        (audio as HTMLAudioElement & { playsInline: boolean }).playsInline = true;
         audioRef.current = audio;
 
         // Preload element: same CORS settings required so the browser shares the
@@ -865,6 +896,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const preload = new Audio();
         preload.preload = "auto";
         preload.crossOrigin = "anonymous";
+        // playsInline required on the preload element too: when the gapless bridge
+        // activates and calls preload.play(), iOS must not fullscreen-hijack it.
+        (preload as HTMLAudioElement & { playsInline: boolean }).playsInline = true;
         preload.volume = 0;   // Never actually played — only used for prefetching
         preload.muted = true; // Hard mute: volume=0 alone is not guaranteed across all
                               // Chromium/Electron audio routing paths for custom protocols
@@ -876,6 +910,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         let lastReportedDuration = 0;
 
         const handleTimeUpdate = () => {
+            // Stamp every timeupdate so the stall watchdog knows audio is flowing.
+            lastTimeUpdateRef.current = Date.now();
             setProgress(audio.currentTime);
             if (audio.duration && isFinite(audio.duration) && audio.duration > 0) {
                 if (audio.duration !== lastReportedDuration) {
@@ -1228,6 +1264,135 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         document.addEventListener("visibilitychange", handleVisibilityChange);
         document.addEventListener("touchstart", handleTouchResume, { passive: true });
 
+        // ── iOS/Android stall watchdog ────────────────────────────────────────
+        // iOS WebKit silently drops audio HTTP fetches without firing 'stalled'
+        // or 'waiting'. The element's readyState stays HAVE_CURRENT_DATA (2)
+        // while currentTime stops advancing, but no event fires.
+        //
+        // We check every 4 seconds whether:
+        //   1. The element thinks it is playing (!paused, not ended, not loading)
+        //   2. No timeupdate has arrived in the last WATCHDOG_SILENCE_MS ms
+        //   3. We are not in a deliberate transition
+        //
+        // If all three are true, we run the same reload+seek recovery that
+        // handleStalled uses. The watchdog is cleared when the page goes hidden
+        // (Android Chrome throttles intervals to ~60 s when backgrounded anyway,
+        // so it would produce false positives) and restarted on visibility.
+        const WATCHDOG_POLL_MS = 4000;
+        const WATCHDOG_SILENCE_MS = 6000; // timeupdate should arrive every ~250 ms
+
+        const runWatchdog = () => {
+            if (audioRef.current !== audio) return;
+            if (isTransitioningRef.current) return;
+            if (audio.paused || audio.ended) return;
+            if (audio.readyState >= 3) {
+                // readyState is fine — but check if time is actually advancing.
+                // On some Android devices, readyState stays HAVE_FUTURE_DATA while
+                // the decode pipeline is frozen (GC pause or thermal throttle).
+                const silenceMs = Date.now() - lastTimeUpdateRef.current;
+                if (lastTimeUpdateRef.current > 0 && silenceMs > WATCHDOG_SILENCE_MS) {
+                    dbg(`watchdog: timeupdate silent ${silenceMs} ms — treating as stall`);
+                    handleStalled();
+                }
+                return;
+            }
+            // readyState < HAVE_FUTURE_DATA with element not paused → silent stall
+            const silenceMs = Date.now() - lastTimeUpdateRef.current;
+            if (silenceMs > WATCHDOG_SILENCE_MS) {
+                dbg(`watchdog: readyState=${audio.readyState} silent ${silenceMs} ms — recovering`);
+                handleStalled();
+            }
+        };
+
+        const startWatchdog = () => {
+            if (stallWatchdogRef.current !== null) return; // already running
+            lastTimeUpdateRef.current = Date.now(); // reset baseline
+            stallWatchdogRef.current = setInterval(runWatchdog, WATCHDOG_POLL_MS);
+            dbg('watchdog: started');
+        };
+
+        const stopWatchdog = () => {
+            if (stallWatchdogRef.current !== null) {
+                clearInterval(stallWatchdogRef.current);
+                stallWatchdogRef.current = null;
+                dbg('watchdog: stopped');
+            }
+        };
+
+        // Start watchdog immediately (it self-gates on paused/ended).
+        startWatchdog();
+
+        // Pause watchdog while page is hidden: Android Chrome throttles
+        // setInterval to ≥60 s in background tabs, so the watchdog would
+        // fire long after the user returns and produce false recoveries.
+        // We stop it on hidden and restart on visible.
+        const handleVisibilityForWatchdog = () => {
+            if (document.visibilityState === 'hidden') {
+                stopWatchdog();
+            } else {
+                // Reset the timestamp baseline so we don't immediately fire on
+                // return (the gap while hidden is expected).
+                lastTimeUpdateRef.current = Date.now();
+                startWatchdog();
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityForWatchdog);
+
+        // ── Network online recovery ───────────────────────────────────────────
+        // When the device switches networks (WiFi → cell, airplane off, etc.),
+        // the audio element's pending HTTP request is silently cancelled on
+        // Android. The 'online' event fires when connectivity is restored.
+        // At that point, if the element is stalled, force a reload+seek.
+        const handleOnline = () => {
+            dbg(`navigator online | readyState=${audio.readyState} paused=${audio.paused}`);
+            if (audioRef.current !== audio) return;
+            if (audio.paused || audio.ended || isTransitioningRef.current) return;
+            if (audio.readyState < 3) {
+                dbg('online recovery: element stalled, forcing reload');
+                handleStalled();
+            }
+        };
+        if (!onlineRecoveryBoundRef.current) {
+            window.addEventListener('online', handleOnline);
+            onlineRecoveryBoundRef.current = true;
+        }
+
+        // ── Page Lifecycle API: freeze / resume ───────────────────────────────
+        // Chrome on Android can "freeze" a backgrounded page (suspend JS execution
+        // entirely) without firing visibilitychange. The 'freeze' event is the
+        // only reliable signal. On 'resume', we need to:
+        //   1. Restart the watchdog (timers were frozen, baseline is stale)
+        //   2. Attempt AudioContext + element resume if we had playing intent
+        // Note: 'freeze'/'resume' are fired on the document in Chrome 68+.
+        const handleFreeze = () => {
+            dbg('page freeze: stopping watchdog');
+            stopWatchdog();
+            // Snapshot playing intent before JS is frozen
+            if (audio && !audio.paused) {
+                wasPlayingBeforeHiddenRef.current = true;
+            }
+        };
+
+        const handleResume = () => {
+            dbg(`page resume | wasPlaying=${wasPlayingBeforeHiddenRef.current}`);
+            lastTimeUpdateRef.current = Date.now();
+            startWatchdog();
+            if (wasPlayingBeforeHiddenRef.current) {
+                const ctx = audioCtxRef.current;
+                if (ctx && ctx.state !== 'running' && ctx.state !== 'closed') {
+                    ctx.resume().catch(() => {});
+                }
+                if (audio.paused) {
+                    audio.play()
+                        .then(() => { wasPlayingBeforeHiddenRef.current = false; })
+                        .catch(e => dbg(`page resume play() FAILED: ${e?.name}`));
+                }
+            }
+        };
+
+        document.addEventListener('freeze', handleFreeze);
+        document.addEventListener('resume', handleResume);
+
         return () => {
             isUserPauseRef.current = true; // cleanup pause is not a system pause
             // Clear bridge seek flag so any in-flight seek doesn't leave stale state
@@ -1245,6 +1410,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 clearTimeout(stallRecoveryTimerRef.current);
                 stallRecoveryTimerRef.current = null;
             }
+            // Stop the stall watchdog interval
+            stopWatchdog();
+            // Remove mobile-specific document/window listeners
+            document.removeEventListener('visibilitychange', handleVisibilityForWatchdog);
+            document.removeEventListener('freeze', handleFreeze);
+            document.removeEventListener('resume', handleResume);
+            window.removeEventListener('online', handleOnline);
+            onlineRecoveryBoundRef.current = false;
             // Tear down the AudioContext graph
             if (sourceNodeRef.current) {
                 try { sourceNodeRef.current.disconnect(); } catch { /* ignore */ }

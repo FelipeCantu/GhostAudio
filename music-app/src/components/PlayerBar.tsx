@@ -121,7 +121,33 @@ export default function PlayerBar() {
     const ctx2d = canvas.getContext("2d");
     if (!ctx2d) return;
 
+    // Mobile battery / GC optimisation: stop the rAF loop while the page is
+    // hidden (background tab, screen off). requestAnimationFrame is supposed
+    // to pause automatically when the page is not visible, but:
+    //   • Some Android WebViews keep firing rAF at a reduced rate (~1 fps)
+    //     which still forces GC pressure on the JS heap.
+    //   • Chrome on Android may batch rAF callbacks when returning to the
+    //     foreground, causing a CPU spike that can interrupt the audio decode
+    //     thread for tens of milliseconds → audible glitch.
+    // Stopping explicitly and restarting on visibility is the safest approach.
+    let paused = false;
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        paused = true;
+        if (animFrameRef.current) {
+          cancelAnimationFrame(animFrameRef.current);
+          animFrameRef.current = null;
+        }
+      } else {
+        paused = false;
+        draw(); // restart the loop
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     const draw = () => {
+      if (paused) return;
       animFrameRef.current = requestAnimationFrame(draw);
       analyser.getByteFrequencyData(dataArray);
 
@@ -146,6 +172,7 @@ export default function PlayerBar() {
     draw();
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [isPlaying, getAnalyser]);
 
