@@ -230,6 +230,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // Volume ref (always tracks latest user volume, avoids stale closures)
     const fadeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const volumeRef = useRef(volume);
+    // Tracks the setTimeout that clears isTransitioningRef after handlePlaying fires.
+    // Must be a ref so we can cancel it on track-change and unmount, preventing a
+    // stale timer from prematurely opening the transition guard on the incoming track
+    // and triggering a second spurious stall-recovery + audio.load() mid-playback.
+    const transitionClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Timestamp of the last time setProgress was called. Used to throttle progress
+    // updates to a maximum of ~4 Hz (every 250 ms) so React re-renders don't starve
+    // the browser's audio decode thread on low-end mobile devices.
+    const lastProgressUpdateRef = useRef<number>(0);
     // Second audio element used to pre-buffer the next track for gapless playback.
     // When the primary element ends, if this secondary element has the correct
     // src and readyState >= HAVE_FUTURE_DATA (3), we swap them rather than doing
@@ -622,6 +631,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             fadeTimerRef.current = null;
         }
 
+        // Cancel any in-flight isTransitioning→false timer from a previous
+        // handlePlaying so it can't prematurely open the guard on this new track.
+        // If not cancelled, the timer closes over isTransitioningRef (a ref, not
+        // a captured value), so when it fires 600 ms later it reads the *current*
+        // isTransitioningRef.current — which by then belongs to this new track —
+        // and clears it too early, re-opening the guard before the new decode
+        // pipeline has settled. This allows a stale watchdog/stall event to trigger
+        // audio.load() mid-playback, causing the pitch-shift and tempo bug.
+        if (transitionClearTimerRef.current !== null) {
+            clearTimeout(transitionClearTimerRef.current);
+            transitionClearTimerRef.current = null;
+        }
+
         // Reset preload and bridge flags when starting new track
         isPreloadingRef.current = false;
         // Clear bridge seek guard — if a prior bridge seek was in-flight when the
@@ -796,9 +818,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
     }, [isPlaying]);
 
+    // Ref that tracks the last progress value sent to setPositionState.
+    // Used to throttle MediaSession position updates to 1 Hz — the OS lock
+    // screen / notification only needs second-granularity accuracy. Calling
+    // setPositionState at the full timeupdate rate (4–8 Hz) wastes main-thread
+    // budget on IPC to the browser's media session process on iOS/Android.
+    const lastPositionStateRef = useRef(-1);
     useEffect(() => {
         if (!("mediaSession" in navigator)) return;
         if (!duration || !isFinite(duration) || duration <= 0) return;
+        // Only update if position changed by at least 1 second since last call.
+        if (Math.abs(progress - lastPositionStateRef.current) < 1) return;
+        lastPositionStateRef.current = progress;
         try {
             navigator.mediaSession.setPositionState({
                 duration,
@@ -911,7 +942,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const handleTimeUpdate = () => {
             // Stamp every timeupdate so the stall watchdog knows audio is flowing.
-            lastTimeUpdateRef.current = Date.now();
+            const now = Date.now();
+            lastTimeUpdateRef.current = now;
+            // Throttle React state updates to ~4 Hz (every 250 ms).
+            // timeupdate fires 4–8 Hz on mobile; each call to setProgress triggers a
+            // full re-render of every PlayerContext consumer. On low-end iOS/Android,
+            // these re-renders can exceed 16 ms and starve the browser's audio decode
+            // thread, causing audible stuttering and laggy playback. We still stamp
+            // lastTimeUpdateRef on every event so the stall watchdog remains accurate.
+            if (now - lastProgressUpdateRef.current < 250) return;
+            lastProgressUpdateRef.current = now;
             setProgress(audio.currentTime);
             if (audio.duration && isFinite(audio.duration) && audio.duration > 0) {
                 if (audio.duration !== lastReportedDuration) {
@@ -1015,7 +1055,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const handlePlaying = () => {
             const ctxState = audioCtxRef.current?.state ?? "none";
             dbg(`playing | ctx=${ctxState} wasHidden=${wasPlayingBeforeHiddenRef.current}`);
-            setTimeout(() => { isTransitioningRef.current = false; }, 300);
+            // Clear the transition guard 600 ms after the element enters 'playing'
+            // state. 600 ms (up from 300 ms) gives iOS/Android enough time for the
+            // decode pipeline to fully stabilise before we re-enable stall detection.
+            // The timer is stored in a ref so playTrackInternal can cancel it when a
+            // new track is started — preventing the stale timer from prematurely
+            // clearing the incoming track's transition guard and triggering a
+            // spurious audio.load() that causes the pitch-shift / slowdown bug.
+            if (transitionClearTimerRef.current !== null) {
+                clearTimeout(transitionClearTimerRef.current);
+            }
+            transitionClearTimerRef.current = setTimeout(() => {
+                transitionClearTimerRef.current = null;
+                isTransitioningRef.current = false;
+            }, 600);
             setIsLoading(false);
             setError(null);
             setIsPlaying(true);
@@ -1144,8 +1197,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                     // and kill playback while we are intentionally reloading.
                     // Do NOT clear isTransitioningRef synchronously here — audio.play()
                     // is async and the browser fires another pause during decode-pipeline
-                    // re-init after the reload. handlePlaying's setTimeout(300) will
-                    // clear the flag once the pipeline has stabilised.
+                    // re-init after the reload. handlePlaying's transitionClearTimerRef
+                    // (600 ms) will clear the flag once the pipeline has stabilised.
                     isTransitioningRef.current = true;
                     // Reset preload state — after a real stall recovery the preload
                     // element's buffer is stale. Clearing these flags lets
@@ -1165,7 +1218,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                         }
                         audio.play().catch(() => {});
                     }
-                    // isTransitioningRef cleared by handlePlaying's setTimeout(300)
+                    // isTransitioningRef cleared by handlePlaying's transitionClearTimerRef (600 ms)
                 } catch {
                     isTransitioningRef.current = false;
                 }
@@ -1409,6 +1462,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             if (stallRecoveryTimerRef.current !== null) {
                 clearTimeout(stallRecoveryTimerRef.current);
                 stallRecoveryTimerRef.current = null;
+            }
+            // Cancel the isTransitioning→false timer so it can't fire on a
+            // destroyed context and silently clear state for a future mount.
+            if (transitionClearTimerRef.current !== null) {
+                clearTimeout(transitionClearTimerRef.current);
+                transitionClearTimerRef.current = null;
             }
             // Stop the stall watchdog interval
             stopWatchdog();
