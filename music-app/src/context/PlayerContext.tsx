@@ -89,13 +89,6 @@ function linearToGain(linearVolume: number): number {
 // Reduced from 30 to 5 seconds to prevent premature loading and hiccups
 const PRELOAD_AHEAD_SECONDS = 5;
 
-// Crossfade duration in seconds for smooth track transitions.
-// 150 ms is long enough to be a perceptibly smooth transition while short enough
-// that it doesn't feel like a fade. True crossfade (overlapping audio) is not
-// used here because it would require decoding the next track into an
-// AudioBufferSourceNode, which is expensive for long MP3 files. Instead we fade
-// out the tail and fade in the start using the GainNode ramp API.
-const CROSSFADE_DURATION = 0.15;
 
 function getTrackKey(track: Track, albumInfo?: AlbumInfo | null): string {
     return `${track.title}::${albumInfo?.artist ?? ""}`;
