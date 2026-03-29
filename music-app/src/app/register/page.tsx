@@ -70,7 +70,7 @@ export default function RegisterPage() {
         <div className="flex flex-col items-center mb-8">
           <div className="relative w-20 h-20 mb-5">
             <Image
-              src="/logo.svg"
+              src="/dizclogo.png"
               alt="DiZC Logo"
               fill
               className="object-contain drop-shadow-[0_0_20px_rgba(244,211,94,0.25)]"

@@ -85,7 +85,7 @@ function DesktopSidebarContent({
       <div className="pt-8 pb-4 flex justify-center flex-shrink-0">
         <div className="relative w-20 h-20 filter drop-shadow-[0_0_20px_rgba(244,211,94,0.15)] hover:scale-105 transition-transform duration-500">
           <Image
-            src="/logo.svg"
+            src="/dizclogo.png"
             alt="DiZC"
             fill
             className="object-contain"

@@ -115,7 +115,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
           <div className="relative w-20 h-7">
             <Image
-              src="/logo.svg"
+              src="/dizclogo.png"
               alt="DiZC"
               fill
               className="object-contain"
