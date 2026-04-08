@@ -38,6 +38,11 @@ RAILWAY_PUBLIC_DOMAIN = os.environ.get('RAILWAY_PUBLIC_DOMAIN')
 if RAILWAY_PUBLIC_DOMAIN:
     ALLOWED_HOSTS.append(RAILWAY_PUBLIC_DOMAIN)
     ALLOWED_HOSTS.append('.railway.app')
+# Fly.io
+FLY_APP_NAME = os.environ.get('FLY_APP_NAME')
+if FLY_APP_NAME:
+    ALLOWED_HOSTS.append(f'{FLY_APP_NAME}.fly.dev')
+    ALLOWED_HOSTS.append('.fly.dev')
 
 # CORS Configuration
 CORS_ALLOW_ALL_ORIGINS = True
@@ -48,6 +53,7 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.vercel\.app$",
     r"^https://.*\.railway\.app$",
+    r"^https://.*\.fly\.dev$",
 ]
 CORS_ALLOW_CREDENTIALS = True
 
