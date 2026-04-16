@@ -15,8 +15,10 @@ import {
   CheckCircle2,
   Loader2,
   Database,
+  RefreshCw,
 } from "lucide-react";
 import StorageBar from "@/components/StorageBar";
+import { useQuota } from "@/context/QuotaContext";
 
 interface SettingRowProps {
   label: string;
@@ -40,33 +42,40 @@ function SectionCard({
   icon: Icon,
   title,
   iconColor = "text-[#f4d35e]",
+  action,
   children,
   className = "",
 }: {
   icon: React.ElementType;
   title: string;
   iconColor?: string;
+  action?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <div className={`bg-white/4 border border-white/6 rounded-3xl p-5 md:p-7 ${className}`}>
-      <h2 className="text-base font-bold text-white mb-5 flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-xl bg-white/8 flex items-center justify-center">
-          <Icon size={16} className={iconColor} />
-        </div>
-        {title}
-      </h2>
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-base font-bold text-white flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-white/8 flex items-center justify-center">
+            <Icon size={16} className={iconColor} />
+          </div>
+          {title}
+        </h2>
+        {action}
+      </div>
       <div className="space-y-3">{children}</div>
     </div>
   );
 }
 
 export default function SettingsPage() {
-  const { user, logout } = useAuth();
+  const { user, logout, token } = useAuth();
+  const { refetch: refetchQuota } = useQuota();
   const [migrateStatus, setMigrateStatus] = useState<string | null>(null);
   const [migrating, setMigrating] = useState(false);
   const [migrateSuccess, setMigrateSuccess] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
 
   const handleMigrateToR2 = async () => {
     if (!api.isElectron()) return;
@@ -87,6 +96,25 @@ export default function SettingsPage() {
       setMigrateStatus(`Failed: ${e.message}`);
     } finally {
       setMigrating(false);
+    }
+  };
+
+  const handleRecalculateStorage = async () => {
+    if (!token) return;
+    setRecalculating(true);
+    const BACKEND = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    try {
+      const res = await fetch(`${BACKEND}/api/mongo/storage-recalculate/`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      refetchQuota();
+    } catch (e: any) {
+      console.error("Storage recalculate failed:", e.message);
+    } finally {
+      setRecalculating(false);
     }
   };
 
@@ -160,7 +188,21 @@ export default function SettingsPage() {
         </SectionCard>
 
         {/* Storage */}
-        <SectionCard icon={Database} title="Storage">
+        <SectionCard
+          icon={Database}
+          title="Storage"
+          action={
+            <button
+              onClick={handleRecalculateStorage}
+              disabled={recalculating}
+              title="Refresh storage usage"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/8 border border-white/8 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-xs"
+            >
+              <RefreshCw size={12} className={recalculating ? "animate-spin" : ""} />
+              Refresh
+            </button>
+          }
+        >
           <div className="p-4 md:p-5 rounded-2xl bg-black/20">
             <StorageBar variant="full" />
           </div>

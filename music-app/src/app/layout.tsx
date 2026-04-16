@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
+import { QuotaProvider } from "@/context/QuotaContext";
 import { PlayerProvider } from "@/context/PlayerContext";
 import { ImportProvider } from "@/context/ImportContext";
 import { PlaylistProvider } from "@/context/PlaylistContext";
@@ -71,6 +72,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <AuthProvider>
+          <QuotaProvider>
           <PlaylistProvider>
             <ImportProvider>
               <PlayerProvider>
@@ -80,6 +82,7 @@ export default function RootLayout({
               </PlayerProvider>
             </ImportProvider>
           </PlaylistProvider>
+          </QuotaProvider>
         </AuthProvider>
         <PWARegister />
       </body>

@@ -1,21 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useAuth } from "@/context/AuthContext";
 import { motion } from "framer-motion";
 import { Zap } from "lucide-react";
 import Link from "next/link";
-
-const BACKEND = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-interface QuotaData {
-  plan: "free" | "personal" | "lifetime";
-  storage_used_bytes: number;
-  storage_limit_bytes: number;
-  storage_used_gb: number;
-  storage_limit_gb: number;
-  percent_used: number;
-}
+import { useQuota, type QuotaData } from "@/context/QuotaContext";
+import { useAuth } from "@/context/AuthContext";
+import StorageBreakdown from "@/components/StorageBreakdown";
 
 type StorageBarVariant = "full" | "compact";
 
@@ -118,6 +108,9 @@ function StorageBarFull({ data }: { data: QuotaData }) {
           <span className="text-red-400 font-normal"> · Almost full</span>
         )}
       </p>
+
+      {/* Breakdown by category */}
+      {data.breakdown && <StorageBreakdown breakdown={data.breakdown} />}
     </div>
   );
 }
@@ -191,57 +184,20 @@ function SkeletonCompact() {
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 export default function StorageBar({ variant = "full" }: StorageBarProps) {
-  const { token, isAuthenticated } = useAuth();
-  const [data, setData] = useState<QuotaData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const { isAuthenticated } = useAuth();
+  const { quota, loading, error } = useQuota();
 
-  useEffect(() => {
-    if (!isAuthenticated || !token) {
-      setLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const fetchQuota = async () => {
-      try {
-        const res = await fetch(`${BACKEND}/api/mongo/quota/`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json: QuotaData = await res.json();
-        if (!cancelled) {
-          setData(json);
-          setError(false);
-        }
-      } catch {
-        if (!cancelled) setError(true);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    fetchQuota();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, isAuthenticated]);
-
-  // Not authenticated — render nothing
   if (!isAuthenticated) return null;
-
-  // Error — silently hide (don't break the layout)
   if (error) return null;
 
   if (variant === "compact") {
     if (loading) return <SkeletonCompact />;
-    if (!data) return null;
-    return <StorageBarCompact data={data} />;
+    if (!quota) return null;
+    return <StorageBarCompact data={quota} />;
   }
 
   // variant === "full"
   if (loading) return <SkeletonFull />;
-  if (!data) return null;
-  return <StorageBarFull data={data} />;
+  if (!quota) return null;
+  return <StorageBarFull data={quota} />;
 }
